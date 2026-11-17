@@ -1,0 +1,4 @@
+node_modules
+.env
+.vercel
+my-bot-93368-firebase-adminsdk*.json

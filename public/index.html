@@ -1,0 +1,2410 @@
+<!DOCTYPE html>
+<html dir="rtl" lang="ar">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>بوت دليل اللجان الطبية</title>
+<style>
+  :root {
+    --bg:#f4f6fb; --card:#fff; --line:#e4e8f0; --text:#1d2939; --muted:#667085;
+    --brand:#2e6be6; --brand-2:#1f4fb8; --ok:#12b76a; --bad:#f04438; --warn:#f79009;
+    --soft:#eef4ff; --hover:#fafbfd; --radius:14px; --shadow:0 1px 2px rgba(16,24,40,.06),0 4px 14px rgba(16,24,40,.06);
+  }
+  :root[data-theme="dark"] {
+    --bg:#0f1420; --card:#171e2e; --line:#2a3447; --text:#e6ebf5; --muted:#9aa6bd;
+    --brand:#4d86ff; --brand-2:#7aa7ff; --soft:#1d2a44; --hover:#1b2438; --shadow:none;
+  }
+  * { box-sizing: border-box; }
+  body { margin:0; font-family:"Segoe UI",Tahoma,sans-serif; background:var(--bg); color:var(--text); }
+  header { background:linear-gradient(135deg,var(--brand),var(--brand-2)); color:#fff; padding:16px 20px; display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; }
+  header h1 { margin:0; font-size:19px; }
+  header .sub { opacity:.85; font-size:13px; }
+  main { max-width:1080px; margin:18px auto; padding:0 14px 60px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:var(--radius); box-shadow:var(--shadow); padding:16px; margin-bottom:14px; }
+  .card h2 { margin:0 0 12px; font-size:16px; }
+  .hidden { display:none !important; }
+  .muted { color:var(--muted); font-size:13px; }
+
+  button { font:inherit; cursor:pointer; border:0; border-radius:10px; padding:8px 13px; background:var(--brand); color:#fff; transition:transform .08s,opacity .2s; white-space:nowrap; }
+  button:hover { opacity:.92; } button:active { transform:scale(.97); }
+  button.ghost { background:var(--card); color:var(--text); border:1px solid var(--line); }
+  button.danger { background:var(--card); color:var(--bad); border:1px solid #fecdca; }
+  button.ok { background:var(--ok); }
+  button.icon { padding:5px 9px; background:var(--card); color:var(--text); border:1px solid var(--line); }
+  button:disabled { opacity:.45; cursor:not-allowed; }
+
+  input, textarea { width:100%; font:inherit; padding:9px 11px; border:1px solid var(--line); border-radius:10px; background:var(--card); color:var(--text); }
+  input:focus, textarea:focus { outline:2px solid #b2ccff; border-color:var(--brand); }
+  textarea { resize:vertical; min-height:80px; line-height:1.7; }
+  label.f { display:block; font-size:13px; color:var(--muted); margin:10px 0 4px; }
+  .counter { font-size:12px; color:var(--muted); text-align:left; }
+
+  .tabs { display:flex; gap:6px; background:var(--card); border:1px solid var(--line); border-radius:12px; padding:4px; margin-bottom:14px; overflow-x:auto; }
+  .tab { background:transparent; color:var(--muted); padding:9px 14px; }
+  .tab.active { background:var(--soft); color:var(--brand); font-weight:600; }
+
+  .savebar { position:sticky; top:0; z-index:10; background:color-mix(in srgb, var(--bg) 92%, transparent); backdrop-filter:blur(6px); padding:10px 0; margin-bottom:8px; }
+  .row { display:flex; gap:8px; flex-wrap:wrap; align-items:center; justify-content:space-between; }
+  .status { font-size:13px; color:var(--muted); }
+  .status.warn { color:var(--warn); font-weight:600; }
+  .status.ok { color:var(--ok); }
+
+  .banner { background:#fffbeb; border:1px solid #fedf89; color:#7a4b00; border-radius:12px; padding:12px; margin-bottom:12px; display:flex; gap:10px; align-items:center; flex-wrap:wrap; justify-content:space-between; }
+  :root[data-theme="dark"] .banner { background:#2a2312; color:#ffd98a; border-color:#5c4a1c; }
+
+  /* إحصائيات */
+  .kpis { display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:12px; margin-bottom:14px; }
+  .kpi { background:var(--card); border:1px solid var(--line); border-radius:var(--radius); padding:16px; box-shadow:var(--shadow); }
+  .kpi .n { font-size:28px; font-weight:700; }
+  .kpi .l { font-size:13px; color:var(--muted); margin-top:4px; }
+  .kpi.click { cursor:pointer; transition:.15s; }
+  .kpi.click:hover { border-color:var(--accent); transform:translateY(-1px); }
+  .kpi .sub { font-size:11px; color:var(--muted); margin-top:6px; line-height:1.5; }
+  h2.sect { margin:20px 0 10px; font-size:17px; }
+  .cinfo { font-size:12px; color:var(--muted); line-height:1.8; margin-top:4px; }
+  .fchip { display:inline-flex; align-items:center; gap:6px; background:var(--soft); border:1px solid var(--line); border-radius:20px; padding:4px 10px; font-size:12px; }
+  .fchip button { border:0; background:transparent; cursor:pointer; padding:0 2px; font-size:13px; }
+  .sw { position:relative; display:inline-block; width:52px; height:28px; flex:none; }
+  .sw input { opacity:0; width:0; height:0; }
+  .sw .slider { position:absolute; inset:0; background:#cbd5e1; border-radius:28px; cursor:pointer; transition:.2s; }
+  .sw .slider:before { content:""; position:absolute; height:22px; width:22px; right:3px; top:3px; background:#fff; border-radius:50%; transition:.2s; }
+  .sw input:checked + .slider { background:#12b76a; }
+  .sw input:checked + .slider:before { transform:translateX(-24px); }
+  .sw input:disabled + .slider { opacity:.5; cursor:not-allowed; }
+  .delta { font-size:12px; margin-top:6px; }
+  .delta.up { color:var(--ok); } .delta.down { color:var(--bad); }
+  .chart { display:flex; align-items:flex-end; gap:10px; height:170px; padding-top:10px; }
+  .col { flex:1; display:flex; flex-direction:column; align-items:center; justify-content:flex-end; height:100%; }
+  .bar-v { width:100%; background:linear-gradient(180deg,#7aa7ff,var(--brand)); border-radius:8px 8px 0 0; min-height:3px; }
+  .col .num { font-size:12px; font-weight:600; margin-bottom:4px; }
+  .col .lbl { font-size:12px; color:var(--muted); margin-top:6px; }
+  table { width:100%; border-collapse:collapse; font-size:14px; }
+  th, td { padding:9px 10px; border-bottom:1px solid var(--line); text-align:right; }
+  th { color:var(--muted); font-weight:600; background:var(--hover); }
+  .bar { height:8px; background:var(--line); border-radius:8px; overflow:hidden; }
+  .bar > span { display:block; height:100%; background:linear-gradient(90deg,var(--brand),#7aa7ff); }
+  .chips { display:flex; flex-wrap:wrap; gap:6px; }
+  .chip { background:var(--soft); color:var(--brand); padding:4px 10px; border-radius:99px; font-size:13px; }
+  .chip.zero { background:#fef3f2; color:var(--bad); }
+  :root[data-theme="dark"] .chip.zero { background:#3a1f1d; }
+
+  /* شجرة القوايم */
+  .toolbar { display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-bottom:12px; }
+  .toolbar input { max-width:320px; }
+  .node { border:1px solid var(--line); border-radius:12px; padding:12px; margin:10px 0; background:var(--card); transition:box-shadow .15s; }
+  /* ألوان مميزة لكل مستوى عشان ما يبقاش في بعض */
+  .node.lvl-0 { border:2px solid #2e6be6; background:#f3f7ff; border-right:8px solid #2e6be6; }
+  .node.lvl-1 { border:1px solid #12b76a; background:#f0fdf6; border-right:6px solid #12b76a; }
+  .node.lvl-2 { border:1px solid #7a5af8; background:#f6f3ff; border-right:6px solid #7a5af8; }
+  .node.lvl-3 { border:1px solid #f79009; background:#fffaf2; border-right:6px solid #f79009; }
+  .node.lvl-4 { border:1px solid #f04438; background:#fff5f4; border-right:6px solid #f04438; }
+  :root[data-theme="dark"] .node.lvl-0 { background:#16213a; }
+  :root[data-theme="dark"] .node.lvl-1 { background:#13271f; }
+  :root[data-theme="dark"] .node.lvl-2 { background:#211b3a; }
+  :root[data-theme="dark"] .node.lvl-3 { background:#2a200f; }
+  :root[data-theme="dark"] .node.lvl-4 { background:#2b1515; }
+  .lvl-tag { font-size:12px; font-weight:700; padding:3px 9px; border-radius:99px; color:#fff; }
+  .lvl-0 .lvl-tag { background:#2e6be6; } .lvl-1 .lvl-tag { background:#12b76a; }
+  .lvl-2 .lvl-tag { background:#7a5af8; } .lvl-3 .lvl-tag { background:#f79009; }
+  .lvl-4 .lvl-tag { background:#f04438; }
+  .children { border-right:none !important; padding-right:0 !important; margin-right:14px !important; padding-top:4px; }
+  .node.drop { box-shadow:0 0 0 2px var(--brand) inset; background:var(--soft); }
+  .node.dragging { opacity:.5; }
+  .node-head { display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-bottom:8px; cursor:grab; }
+  .node-head .title { font-weight:700; flex:1; min-width:150px; }
+  .badge { font-size:12px; background:var(--soft); color:var(--brand); padding:3px 9px; border-radius:99px; }
+  .actions { display:flex; gap:6px; flex-wrap:wrap; margin-top:10px; }
+  .children { margin-right:18px; padding-right:12px; border-right:3px solid var(--line); }
+  .empty { color:var(--muted); font-size:13px; padding:6px 0; }
+
+  #toasts { position:fixed; bottom:18px; left:18px; display:grid; gap:8px; z-index:50; }
+  .toast { background:#101828; color:#fff; padding:12px 16px; border-radius:12px; box-shadow:0 8px 24px rgba(0,0,0,.2); font-size:14px; max-width:320px; animation:pop .2s ease; }
+  .toast.ok { background:#067647; } .toast.bad { background:#b42318; }
+  @keyframes pop { from { transform:translateY(8px); opacity:0; } to { transform:none; opacity:1; } }
+
+  .modal-bg { position:fixed; inset:0; background:rgba(16,24,40,.5); display:grid; place-items:center; z-index:60; padding:14px; }
+  .modal { background:var(--card); color:var(--text); border-radius:16px; padding:20px; width:min(420px,100%); box-shadow:0 20px 60px rgba(0,0,0,.3); max-height:90vh; overflow:auto; }
+  .modal p { margin:0 0 14px; line-height:1.8; white-space:pre-wrap; }
+  .phone { background:#e8efe3; color:#111; border-radius:14px; padding:14px; }
+  .bubble { background:#fff; color:#111; border-radius:12px; padding:12px; line-height:1.8; white-space:pre-wrap; box-shadow:0 1px 1px rgba(0,0,0,.1); }
+  .kbd { display:grid; gap:6px; margin-top:10px; }
+  .kbd div { background:#dfe8f7; color:#1e4fb3; text-align:center; padding:9px; border-radius:8px; font-size:14px; }
+  .modal .row { justify-content:flex-start; }
+  .q-actions { display:flex; gap:4px; align-items:center; flex-wrap:nowrap; white-space:nowrap; }
+  .q-actions button { padding:6px 8px; font-size:12px; }
+  .answer-toolbar { display:flex; gap:6px; align-items:center; margin-top:6px; flex-wrap:wrap; }
+  .answer-toolbar button { flex-shrink:0; }
+  .file-label { display:flex; align-items:center; gap:6px; background:var(--card); border:1px solid var(--line); border-radius:10px; padding:5px 10px; font-size:12px; color:var(--muted); cursor:pointer; flex:1; min-width:0; overflow:hidden; white-space:nowrap; }
+  .file-label span { overflow:hidden; text-overflow:ellipsis; }
+  .file-label input[type=file] { display:none; }
+  .q-archive-table { table-layout:auto; }
+  .q-archive-table th, .q-archive-table td { padding:7px 6px; }
+
+  @media (max-width:600px) { .tab { padding:8px 10px; font-size:14px; } header h1 { font-size:16px; } .toolbar input { max-width:100%; } }
+</style>
+</head>
+<body>
+
+<header>
+<div>
+  <h1 style="margin-bottom: 15px;">🩺  بوت دليل اللجان الطبية</h1>
+  <div class="sub">القوايم والمحتوى والإحصائيات</div>
+</div>
+  <div class="row" style="justify-content:flex-end">
+    <span id="who" class="sub hidden"></span>
+    <button class="ghost hidden" id="bellBtn" onclick="openQuestionsFromBell()" title="أسئلة مستنية ردك">🔔 <span id="bellCount" style="font-weight:700"></span></button>
+    <button class="ghost" id="themeBtn" onclick="toggleTheme()">🌙</button>
+    <button class="ghost hidden" id="logoutBtn" onclick="logout()">خروج</button>
+  </div>
+</header>
+
+<main>
+  <!-- الدخول -->
+  <section id="login" class="card" style="max-width:380px;margin:60px auto">
+    <h2 style="text-align:center">تسجيل الدخول</h2>
+    <label class="f">اسم المستخدم</label>
+    <input id="u" autocomplete="username" placeholder="اكتب اسم المستخدم">
+    <label class="f">كلمة المرور</label>
+    <input id="p" type="password" autocomplete="current-password" placeholder="••••••••" onkeydown="if(event.key==='Enter')login()">
+    <div style="margin-top:14px"><button style="width:100%" onclick="login()">دخول</button></div>
+    <div id="loginMsg" class="status" style="margin-top:10px;color:var(--bad)"></div>
+  </section>
+
+  <section id="app" class="hidden">
+    <nav class="tabs">
+      <button class="tab active" data-tab="stats" onclick="showTab('stats')">📊 الإحصائيات</button>
+      <button class="tab" data-tab="menu" onclick="showTab('menu')">🧭 القوايم والأزرار</button>
+      <button class="tab" data-tab="questions" onclick="showTab('questions')">💬 الأسئلة</button>
+      <button class="tab" data-tab="archive" onclick="showTab('archive')">🗄️ الأرشيف</button>
+      <button class="tab" data-tab="history" onclick="showTab('history')">🕘 النسخ السابقة</button>
+      <button class="tab" data-tab="bans" onclick="showTab('bans')">🚫 المحظورون</button>
+    </nav>
+
+    <!-- الإحصائيات -->
+    <div id="tab-stats">
+      <div class="row" style="margin-bottom:12px">
+        <h2 style="margin:0">الإحصائيات</h2>
+        <div class="row" style="gap:6px">
+          <button class="ghost" onclick="loadStats()">🔄 تحديث</button>
+          <button class="ghost" onclick="exportAll()">📥 تصدير CSV</button>
+          <button class="ghost" onclick="openReport()">📄 تقرير شامل</button>
+        </div>
+      </div>
+      <div id="stats-body"></div>
+    </div>
+
+    <!-- القوايم -->
+    <div id="tab-menu" class="hidden">
+      <div class="savebar">
+        <div class="row">
+          <div class="row" style="gap:8px">
+            <button class="ok" onclick="save()">💾 حفظ وتحديث البوت</button>
+            <button class="ghost" onclick="previewRoot()">👁 معاينة القايمة الرئيسية</button>
+            <button class="ghost" onclick="discard()">↩️ تراجع لآخر نسخة محفوظة</button>
+            <button class="ghost" onclick="openSystemMessages()">⚙️ رسايل النظام</button>
+          </div>
+          <span id="status" class="status"></span>
+        </div>
+      </div>
+      <div id="draftBanner" class="banner hidden">
+        <span>فيه مسودة محفوظة في المتصفح من تعديل سابق، عايز ترجعها؟</span>
+        <div class="row" style="gap:6px"><button onclick="restoreDraft()">✅ استرجاع</button><button class="ghost" onclick="dropDraft()">تجاهل</button></div>
+      </div>
+      <div class="toolbar">
+        <input id="search" placeholder="🔍 ابحث باسم زرار أو نص..." oninput="onSearch(this.value)">
+        <span class="muted" id="searchInfo"></span>
+      </div>
+      <div class="muted" style="margin-bottom:6px">💡 اسحب أي زرار وأفلته على زرار تاني عشان يدخل جواه. وعشان ترتب الأزرار جوه نفس القايمة استخدم ⬆️ ⬇️.</div>
+      <div id="tree"></div>
+    </div>
+
+    <!-- الأسئلة -->
+    <div id="tab-questions" class="hidden">
+      <div class="row" style="margin-bottom:12px">
+        <h2 style="margin:0">أسئلة العملاء</h2>
+        <div class="row" style="gap:6px">
+          <button class="ghost" onclick="loadQuestions()">🔄 تحديث</button>
+          <button class="ghost" onclick="exportQuestions()">📥 تصدير</button>
+          <button class="ghost" onclick="resetQuestionLimit()">🔓 فتح حد الأسئلة لمعرف</button>
+        </div>
+      </div>
+      <div class="card" id="intakeCard"></div>
+      <div class="card" id="notifyCard" style="display:none"></div>
+      <div class="card" id="quickCard">
+        <div class="row">
+          <h2 style="margin:0">⚡ الإجابات السريعة</h2>
+          <div class="row" style="gap:8px"><span class="muted" id="quickCount"></span><button class="ok" onclick="openQuickManager()">⚡ إدارة</button></div>
+        </div>
+      </div>
+      <div class="toolbar"><input id="qSearch" placeholder="🔍 ابحث في السؤال أو اسم العميل أو Username أو الرقم أو Telegram ID..." oninput="renderQuestions()"><span id="qFilterChip"></span></div>
+      <div class="card" style="padding:0;overflow:auto"><table id="qTable"></table></div>
+      <p class="muted">الأسئلة غير المُجاب عنها فقط تظهر هنا. الأسئلة التي تم الرد عليها تنتقل تلقائيًا إلى الأرشيف، وتظل موجودة في سجل العميل.</p>
+    </div>
+
+    <!-- أرشيف الأسئلة -->
+    <div id="tab-archive" class="hidden">
+      <div class="row" style="margin-bottom:12px">
+        <h2 style="margin:0">🗄️ أرشيف الأسئلة</h2>
+        <div class="row" style="gap:6px">
+          <button class="ghost" onclick="loadQuestions()">🔄 تحديث</button>
+          <button class="ghost" onclick="exportArchive()">📥 تصدير الأرشيف</button>
+        </div>
+      </div>
+      <div class="toolbar">
+        <input id="aSearch" placeholder="🔍 ابحث في السؤال أو الإجابة أو بيانات العميل..." oninput="renderArchive()"><span id="aFilterChip"></span>
+        <label class="muted">من: <input id="aFrom" type="date" onchange="renderArchive()" style="width:auto"></label>
+        <label class="muted">إلى: <input id="aTo" type="date" onchange="renderArchive()" style="width:auto"></label>
+        <button class="ghost" onclick="clearArchiveFilters()">كل الأرشيف</button>
+      </div>
+      <div class="card" style="padding:0;overflow:auto"><table id="aTable" class="q-archive-table"></table></div>
+      <p class="muted">يمكنك التصفية حسب تاريخ السؤال. الإجابة ووقت إرسالها محفوظان مع كل سجل.</p>
+    </div>
+
+    <!-- النسخ السابقة -->
+    <div id="tab-history" class="hidden">
+      <div class="row" style="margin-bottom:12px">
+        <h2 style="margin:0">النسخ السابقة</h2>
+        <button class="ghost" onclick="loadHistory()">🔄 تحديث</button>
+      </div>
+      <div class="card" style="padding:0;overflow:auto"><table id="historyTable"></table></div>
+      <p class="muted">"استرجاع" بيحط النسخة دي في المحرر، وبعدين تضغط حفظ عشان تتثبت.</p>
+    </div>
+
+    <!-- المحظورون -->
+    <div id="tab-bans" class="hidden">
+      <div class="row" style="margin-bottom:12px">
+        <h2 style="margin:0">🚫 العملاء المحظورون</h2>
+        <button class="ghost" onclick="loadBans()">🔄 تحديث</button>
+      </div>
+      <div class="toolbar">
+        <input id="bansSearch" placeholder="🔍 ابحث بمعرف العميل أو الاسم أو السبب أو الموظف..." oninput="renderBans()" style="max-width:340px">
+        <label class="muted">من: <input id="bansFrom" type="date" onchange="renderBans()" style="width:auto"></label>
+        <label class="muted">إلى: <input id="bansTo" type="date" onchange="renderBans()" style="width:auto"></label>
+        <button class="ghost" onclick="clearBansFilters()">كل السجل</button>
+      </div>
+      <div class="card" style="padding:0;overflow:auto"><table id="bansTable"></table></div>
+      <p class="muted">العملاء المحظورون لا يتلقون أي رد من البوت. الحظر للأدمن فقط.</p>
+    </div>
+  </section>
+</main>
+
+<div id="toasts"></div>
+
+<script>
+const DRAFT_KEY = "legan-draft";
+let creds = null, data = null, role = "admin", dirty = false, draftTimer = null, query = "";
+
+const $ = (id) => document.getElementById(id);
+
+// ---------- أدوات عامة ----------
+function toast(msg, type = "") {
+  const el = document.createElement("div");
+  el.className = "toast " + type;
+  el.textContent = msg;
+  $("toasts").appendChild(el);
+  setTimeout(() => el.remove(), 3500);
+}
+
+function modal(html) {
+  return new Promise((resolve) => {
+    const bg = document.createElement("div");
+    bg.className = "modal-bg";
+    bg.innerHTML = `<div class="modal">${html}</div>`;
+    bg.addEventListener("click", (e) => {
+      const r = e.target.dataset.r;
+      if (r !== undefined) { bg.remove(); resolve(r === "1"); }
+      else if (e.target === bg) { bg.remove(); resolve(false); }
+    });
+    document.body.appendChild(bg);
+  });
+}
+
+function confirmBox(text, okText = "تأكيد", danger = false) {
+  const esc = text.replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
+  return modal(`<p>${esc}</p><div class="row">
+    <button class="${danger ? "danger" : "ok"}" data-r="1">${okText}</button>
+    <button class="ghost" data-r="0">إلغاء</button></div>`);
+}
+
+async function api(action, extra = {}) {
+  const res = await fetch("/api/admin", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ ...creds, action, ...extra }),
+  });
+  const j = await res.json().catch(() => ({}));
+  if (!res.ok) { const err = new Error(j.error || "حصل خطأ"); err.status = res.status; throw err; }
+  return j;
+}
+
+function setStatus(text, cls = "") {
+  const el = $("status");
+  el.textContent = text;
+  el.className = "status " + cls;
+}
+
+// ---------- الوضع الداكن ----------
+function applyTheme(t) {
+  document.documentElement.dataset.theme = t;
+  localStorage.setItem("legan-theme", t);
+  $("themeBtn").textContent = t === "dark" ? "☀️" : "🌙";
+}
+function toggleTheme() {
+  applyTheme(document.documentElement.dataset.theme === "dark" ? "light" : "dark");
+}
+applyTheme(localStorage.getItem("legan-theme") || "light");
+
+// ---------- الدخول والخروج ----------
+const SESSION_KEY = "legan-session";
+async function login() {
+  creds = { username: $("u").value, password: $("p").value };
+  try {
+    const j = await api("get");
+    try { sessionStorage.setItem(SESSION_KEY, JSON.stringify(creds)); } catch {}
+    data = j.content;
+    role = j.role;
+    $("login").classList.add("hidden");
+    $("app").classList.remove("hidden");
+    $("logoutBtn").classList.remove("hidden");
+    $("who").textContent = `👤 ${creds.username} (${role === "admin" ? "أدمن" : "محرر"})`;
+    $("who").classList.remove("hidden");
+    checkDraft();
+    draw();
+    loadStats();
+    startAutoRefresh();
+    loadQuestions();
+  } catch (e) {
+    creds = null;
+    // نمسح الجلسة المحفوظة بس لو البيانات اترفضت فعلاً (مش عند انقطاع النت)
+    if (e.status === 401 || e.status === 403) { try { sessionStorage.removeItem(SESSION_KEY); } catch {} }
+    $("loginMsg").textContent = e.message;
+  }
+}
+// ريفرش أو رجوع للتاب: ندخل تلقائياً بالجلسة المحفوظة بدل ما نطلب الدخول من الأول
+async function autoLogin() {
+  let saved = null;
+  try { saved = JSON.parse(sessionStorage.getItem(SESSION_KEY) || "null"); } catch {}
+  if (!saved || !saved.username || !saved.password) return;
+  $("u").value = saved.username; $("p").value = saved.password;
+  await login();
+}
+
+function logout() {
+  try { sessionStorage.removeItem(SESSION_KEY); } catch {}
+  if (dirty && !confirm("فيه تعديلات مش متحفظة. هتتحفظ كمسودة في المتصفح. تخرج؟")) return;
+  if (dirty) localStorage.setItem(DRAFT_KEY, JSON.stringify(data));
+  location.reload();
+}
+
+// ---------- المسودة التلقائية ----------
+function markDirty() {
+  dirty = true;
+  setStatus("● تعديلات غير محفوظة", "warn");
+  clearTimeout(draftTimer);
+  draftTimer = setTimeout(() => localStorage.setItem(DRAFT_KEY, JSON.stringify(data)), 600);
+}
+
+function checkDraft() {
+  const raw = localStorage.getItem(DRAFT_KEY);
+  if (!raw) return;
+  try {
+    if (JSON.stringify(JSON.parse(raw)) !== JSON.stringify(data)) $("draftBanner").classList.remove("hidden");
+    else localStorage.removeItem(DRAFT_KEY);
+  } catch { localStorage.removeItem(DRAFT_KEY); }
+}
+
+function restoreDraft() {
+  data = JSON.parse(localStorage.getItem(DRAFT_KEY));
+  $("draftBanner").classList.add("hidden");
+  markDirty();
+  draw();
+  toast("رجعت المسودة، اضغط حفظ عشان تتثبت", "ok");
+}
+
+function dropDraft() {
+  localStorage.removeItem(DRAFT_KEY);
+  $("draftBanner").classList.add("hidden");
+}
+
+// ---------- التنقل ----------
+function showTab(name) {
+  document.querySelectorAll(".tab").forEach((b) => b.classList.toggle("active", b.dataset.tab === name));
+  ["stats", "menu", "questions", "archive", "history", "bans"].forEach((t) => $("tab-" + t).classList.toggle("hidden", t !== name));
+  if (name === "stats") loadStats();
+  if (name === "questions" || name === "archive") {
+    if (questionsCache.length) { renderQuestions(); renderArchive(); }   // نعرض اللي عندنا فوراً، وبعدين نحدّث
+    loadQuestions();
+  }
+  if (name === "history") loadHistory();
+  if (name === "bans") loadBans();
+}
+
+// ---------- الشجرة: مسارات وأسماء ----------
+function pathLabel(p) {
+  if (p === "home") return "🏠 القايمة الرئيسية";
+  let node = data;
+  const names = [];
+  for (const i of p.split(".").map(Number)) {
+    if (!node || !node.items || !node.items[i]) return "زرار محذوف أو اتغير";
+    node = node.items[i];
+    names.push(node.label || "بدون اسم");
+  }
+  return names.join(" ← ");
+}
+
+function allNodes(node = data, path = "", out = []) {
+  out.push({ path, node });
+  (node.items || []).forEach((c, i) => allNodes(c, (path ? path + "." : "") + i, out));
+  return out;
+}
+
+function heightOf(n) {
+  return 1 + Math.max(0, ...(n.items || []).map(heightOf));
+}
+
+function inside(anc, x) {
+  if (anc === x) return true;
+  return (anc.items || []).some((c) => inside(c, x));
+}
+
+function removeNode(target, from = data) {
+  for (let i = 0; i < (from.items || []).length; i++) {
+    if (from.items[i] === target) { from.items.splice(i, 1); return true; }
+    if (removeNode(target, from.items[i])) return true;
+  }
+  return false;
+}
+
+function matches(n, q) {
+  return (n.label || "").includes(q) || (n.text || "").includes(q) || (n.items || []).some((c) => matches(c, q));
+}
+
+// ---------- عرض الشجرة ----------
+let currentPath = "";   // المسار اللي المحرر واقف عليه (فارغ = القايمة الرئيسية)
+
+function getNodeByPath(p) {
+  let n = data;
+  if (p === "") return n;
+  for (const i of p.split(".").map(Number)) {
+    if (!n || !n.items || !n.items[i]) return null;
+    n = n.items[i];
+  }
+  return n;
+}
+
+function parentPath(p) {
+  return p.includes(".") ? p.slice(0, p.lastIndexOf(".")) : "";
+}
+
+// نافذة رسايل النظام: كل قسم بيوضح إمتى بيظهر
+function openSystemMessages() {
+  if (!data.messages) data.messages = {};
+  const m = data.messages;
+  // كل خانة: [المفتاح، العنوان، شرح إمتى بتظهر، الافتراضي]
+  const sections = [
+    ["🧾 الاستعلام عن الحجز", "بيظهر لما العميل يكتب كلام فيه استعلام عن موعده أو حجزه", [
+      ["inquiry", "📝 نص الرسالة", "الرسالة اللي بتظهر للعميل", "للاستعلام عن موعدك أو حجزك، ادخل على بوت الحجز مباشرة 👇"],
+      ["inquiryButtonText", "🔘 اسم الزرار تحت الرسالة (اختياري)", "لو فاضي، الرسالة بتظهر من غير زرار", "📅 فتح بوت الحجز"],
+      ["inquiryButtonUrl", "🔗 رابط الزرار (اختياري، لازم يبدأ بـ https://)", "الزرار بيفتح الرابط ده", "https://t.me/H19806bot"],
+    ], "inquiryKeywords"],
+    ["🔍 البحث عن الإجابة", "بيظهر لما الكلام يطابق أكتر من زرار", [
+      ["didYouMean", "📝 نص سؤال التوضيح (تقصد؟)", "قبل قايمة الاختيارات", "تقصد؟ اختار من دول 👇"],
+    ]],
+    ["💬 الأسئلة", "بتتعلق بزرار ابعت سؤالك", [
+      ["askPrompt", "📝 الرسالة لما العميل يدوس زرار السؤال", "بتظهر ومعاها خانة الكتابة", "اكتب سؤالك هنا 👇"],
+      ["askThanks", "✅ الرسالة بعد ما السؤال يتسجل", "بتظهر بعد ما العميل يبعت سؤاله", "استلمنا سؤالك، شكراً لتواصلك 🌷"],
+      ["questionSaveError", "⚠️ رسالة فشل حفظ السؤال", "تظهر لو تعذر تسجيل السؤال؛ لا تظهر رسالة الاستلام إلا بعد نجاح الحفظ", "حصلت مشكلة مؤقتة في حفظ سؤالك، وما اتسجلش عندنا. جرّب تبعته تاني بعد شوية من فضلك 🙏"],
+      ["remaining", "🔢 الجملة اللي بتتكتب بعد الشكر (اكتب {left} للرقم)", "بتوضح عدد الأسئلة الباقية", "(باقي لك {left} أسئلة خلال 24 ساعة)"],
+      ["limitReached", "🚫 لما العميل يخلص أسئلته (اكتب {max} للحد)", "بتظهر لما يوصل للحد اليومي", "استنفدت عدد الأسئلة المسموحة ({max}) خلال 24 ساعة 🙏"],
+    ]],
+    ["🔁 متابعة السؤال والإغلاق", "تتحكم في الرسائل التي تظهر بعد الرد أو عند إغلاق السؤال", [
+      ["answerFooter", "📌 النص أسفل كل إجابة من الإدارة", "يظهر لتوضيح Reply للسؤال نفسه وزر السؤال الجديد؛ اتركه فارغًا للافتراضي", "\n\n📌 مسموح بحد أقصى 10 متابعات على نفس السؤال. اضغط Reply للمتابعة، ولسؤال جديد استخدم «ابعت سؤالك»."],
+      ["finalAnswerFooter", "🔒 النص أسفل الرد النهائي", "يظهر بعد الرد على آخر متابعة عند إغلاق السؤال", "\n\n🔒 تم إغلاق السؤال. لأي سؤال جديد استخدم زر «ابعت سؤالك»."],
+      ["followupPlaceholder", "✍️ النص داخل خانة Reply", "يظهر في خانة الكتابة عند الرد على إجابة الإدارة", "اكتب متابعة السؤال هنا..."],
+      ["followupLimitIncreased", "🎁 رسالة زيادة حد المتابعات", "تظهر للعميل بعد نجاح زيادة حد متابعاته من اللوحة", "🎁 تمت زيادة عدد المتابعات المسموح لك بها 🌷\nتقدر دلوقتي تكمل متابعة استفسارك بالرد (Reply) على آخر رد وصلك من الإدارة."],
+      ["followupReceived", "✅ رسالة استلام المتابعة", "تظهر بعد Reply صحيح على إجابة ما زالت مفتوحة", "تم استلام المتابعة على نفس السؤال ✅\nسيتم الرد عليك هنا."],
+      ["followupLimit", "🚫 رسالة انتهاء المتابعات", "تظهر بعد الوصول للحد الأقصى (10 افتراضيًا) لنفس السؤال", "تم الوصول للحد الأقصى للمتابعات على هذا السؤال. لو عندك استفسار جديد، استخدم زر «ابعت سؤالك» 👇"],
+      ["autoClosed", "⏱ رسالة الإغلاق التلقائي", "تظهر بعد 24 ساعة بدون متابعة", "🔒 تم إغلاق سؤالك تلقائيًا لعدم وجود متابعة خلال 24 ساعة.\n\nإذا كان لديك استفسار جديد، استخدم زر «ابعت سؤالك» 👇"],
+      ["manualClosed", "🔒 رسالة الإغلاق اليدوي", "تظهر عند ضغط الإدارة على إغلاق السؤال", "🔒 تم إغلاق هذا السؤال من الإدارة.\n\nإذا كان لديك استفسار جديد، استخدم زر «ابعت سؤالك» 👇"],
+    ]],
+    ["📱 مشاركة رقم الهاتف", "اختيارية تماماً. بتظهر مرة واحدة لكل عميل، وبتتفعل بس لما PHONE_ENC_KEY يكون مضبوط", [
+      ["phonePrompt", "📝 نص طلب المشاركة", "بيظهر مع زرارين: مشاركة / الاستمرار بدون مشاركة", "عشان نقدر نخدمك أحسن ونتواصل معاك لو احتجنا، تقدر تشارك رقم هاتفك مع الإدارة 📱\nالمشاركة اختيارية تماماً، وعدم المشاركة مش بيمنعك من استخدام البوت."],
+      ["phoneShareBtn", "🔘 اسم زرار المشاركة", "زرار تيليجرام الرسمي لمشاركة الرقم", "📱 مشاركة رقم الهاتف"],
+      ["phoneSkipBtn", "🔘 اسم زرار الاستمرار بدون مشاركة", "لو غيّرته، العملاء اللي ظاهر لهم الزرار القديم لازم يعملوا /start", "⏭️ الاستمرار بدون مشاركة"],
+      ["phoneMenuBtn", "🔘 اسم الزرار في القايمة الرئيسية", "للمشاركة في أي وقت", "📱 مشاركة رقم الهاتف (اختياري)"],
+      ["phoneThanks", "✅ رسالة بعد حفظ الرقم", "", "تم حفظ رقمك بشكل آمن ✅ شكراً لك 🌷"],
+      ["phoneSkipped", "⏭️ رسالة بعد الاستمرار بدون مشاركة", "", "تمام 👍 تقدر تكمل استخدام البوت عادي. ولو حبيت تشارك رقمك بعدين هتلاقي زرار «📱 مشاركة رقم الهاتف» في القايمة الرئيسية."],
+      ["phoneMismatch", "🚫 رسالة لما الرقم مش بتاع صاحب الحساب", "", "الرقم ده مش مسجل على حسابك في تيليجرام، فمقدرش أحفظه 🙏\nلو حابب تشارك رقمك اضغط الزرار تحت 👇"],
+      ["phoneAlready", "ℹ️ رسالة لو الرقم محفوظ بالفعل", "", "رقمك محفوظ عندنا بالفعل ✅"],
+    ]],
+    ["🩺 الأسئلة الطبية", "بتظهر لما السؤال يكون عن حالة أو علاج", [
+      ["medical", "📝 نص الرسالة", "بيحوّل العميل للخط الساخن", "السؤال ده محتاج متابعة طبية... للمساعدة اتصل بالخط الساخن 19806 📞"],
+    ], "medicalKeywords"],
+    ["👇 الرد العام", "بيظهر لما الكلام ما يطابقش أي حاجة", [
+      ["fallback", "📝 نص الرسالة", "بيرجّع القايمة الرئيسية", "اختار من الأزرار تحت 👇"],
+    ]],
+  ];
+
+  const bg = document.createElement("div");
+  bg.className = "modal-bg";
+  const box = document.createElement("div");
+  box.className = "modal";
+  box.style.width = "min(620px,100%)";
+  box.innerHTML = `<h2 style="margin:0 0 6px">⚙️ رسايل النظام</h2>
+    <p class="muted" style="margin:0 0 6px">كل قسم بيوضح إمتى الرسالة بتظهر للعميل. سيب أي خانة فاضية عشان ترجع للافتراضي.</p>`;
+
+  const listField = (labelText, placeholder, value, onChange) => {
+    const lb = document.createElement("label");
+    lb.className = "f";
+    lb.textContent = labelText;
+    const ta = document.createElement("textarea");
+    ta.rows = 2;
+    ta.placeholder = placeholder;
+    ta.value = value;
+    ta.oninput = () => onChange(ta.value);
+    box.append(lb, ta);
+  };
+
+  sections.forEach(([title, when, fields, special]) => {
+    const h = document.createElement("h3");
+    h.style.cssText = "margin:18px 0 2px;color:var(--brand)";
+    h.textContent = title;
+    box.appendChild(h);
+    const w = document.createElement("div");
+    w.className = "muted";
+    w.style.marginBottom = "6px";
+    w.textContent = "⏱ " + when;
+    box.appendChild(w);
+
+    fields.forEach(([key, label, hint, def]) => {
+      const lb = document.createElement("label");
+      lb.className = "f";
+      lb.textContent = label + " — " + hint;
+      const isUrl = key === "inquiryButtonUrl";
+      const el = isUrl ? document.createElement("input") : document.createElement("textarea");
+      if (!isUrl) el.rows = 2;
+      el.placeholder = "الافتراضي: " + def;
+      el.value = m[key] || "";
+      el.oninput = () => { if (el.value.trim()) m[key] = el.value.trim(); else delete m[key]; markDirty(); };
+      box.append(lb, el);
+    });
+
+    if (special === "inquiryKeywords") {
+      listField("🔑 كلمات الاستعلام (بفاصلة) — لو العميل كتب أي كلمة منهم، الرد ده يظهر",
+        "الافتراضي: استعلم، استعلام، موعدي، حجزي، متابعة، حالة الطلب، رقم الطلب",
+        (data.inquiryKeywords || []).join("، "),
+        (v) => {
+          const list = v.split(/[،,]/).map((x) => x.trim()).filter(Boolean);
+          if (list.length) data.inquiryKeywords = list; else delete data.inquiryKeywords;
+          markDirty();
+        });
+    }
+    if (special === "medicalKeywords") {
+      listField("🔑 كلمات الأسئلة الطبية (بفاصلة) — لو العميل كتب أي كلمة منهم، بيتحول للخط الساخن",
+        "علاج، دوا، ألم، أعراض، مرض، جرعة، تشخيص، حساسية، حرارة",
+        (data.medicalKeywords || []).join("، "),
+        (v) => {
+          const list = v.split(/[،,]/).map((x) => x.trim()).filter(Boolean);
+          if (list.length) data.medicalKeywords = list; else delete data.medicalKeywords;
+          markDirty();
+        });
+    }
+  });
+
+  const close = document.createElement("button");
+  close.textContent = "تم";
+  close.style.marginTop = "14px";
+  close.onclick = () => bg.remove();
+  box.appendChild(close);
+  bg.appendChild(box);
+  bg.addEventListener("click", (e) => { if (e.target === bg) bg.remove(); });
+  document.body.appendChild(bg);
+}
+
+function navBar() {
+  const wrap = document.createElement("div");
+  wrap.className = "card";
+  wrap.style.cssText = "padding:12px";
+
+  const parts = currentPath === "" ? [] : currentPath.split(".");
+
+  // سلسلة قوايم منسدلة: كل قايمة بتفتح اللي بعدها
+  const chain = document.createElement("div");
+  chain.style.cssText = "display:flex;flex-wrap:wrap;gap:10px;align-items:center";
+
+  const levels = parts.length + 1;   // مستوى الجذر + كل مستوى مختار
+  for (let k = 0; k < levels; k++) {
+    const prefix = parts.slice(0, k).join(".");
+    const node = getNodeByPath(prefix);
+    if (!node || !node.items || !node.items.length) break;
+
+    const box = document.createElement("div");
+    box.style.cssText = "display:flex;flex-direction:column;gap:4px;min-width:200px;flex:1";
+    const lb = document.createElement("span");
+    lb.className = "muted";
+    lb.textContent = k === 0 ? "🏠 القايمة الرئيسية:" : `↳ الزرار الفرعي (${k}):`;
+
+    const sel = document.createElement("select");
+    sel.style.cssText = "padding:9px;border-radius:10px;border:1px solid var(--line);background:var(--card);color:var(--text);font:inherit";
+    const none = document.createElement("option");
+    none.value = "";
+    none.textContent = "— اختار —";
+    sel.appendChild(none);
+    node.items.forEach((c, i) => {
+      const o = document.createElement("option");
+      o.value = String(i);
+      o.textContent = c.label || "بدون اسم";
+      sel.appendChild(o);
+    });
+    sel.value = k < parts.length ? parts[k] : "";
+    sel.onchange = () => {
+      const v = sel.value;
+      currentPath = v === "" ? prefix : [...parts.slice(0, k), v].join(".");
+      draw();
+    };
+
+    box.append(lb, sel);
+    chain.appendChild(box);
+  }
+
+  const tools = document.createElement("div");
+  tools.style.cssText = "display:flex;gap:6px;margin-top:10px";
+  const up = document.createElement("button");
+  up.className = "ghost";
+  up.textContent = "⬅️ للقايمة اللي فوق";
+  up.disabled = currentPath === "";
+  up.onclick = () => { currentPath = parentPath(currentPath); draw(); };
+  const home = document.createElement("button");
+  home.className = "ghost";
+  home.textContent = "🏠 الرئيسية";
+  home.disabled = currentPath === "";
+  home.onclick = () => { currentPath = ""; draw(); };
+  tools.append(up, home);
+
+  wrap.append(chain, tools);
+  return wrap;
+}
+
+function draw() {
+  const t = $("tree");
+  t.innerHTML = "";
+  const q = query.trim();
+  const count = q ? allNodes().filter(({ node }) => (node.label || "").includes(q) || (node.text || "").includes(q)).length : 0;
+  $("searchInfo").textContent = q ? `${count} نتيجة` : "";
+
+  let node = getNodeByPath(currentPath);
+  if (!node) { currentPath = ""; node = data; }
+  const depth = currentPath === "" ? 0 : currentPath.split(".").length;
+  const parent = currentPath === "" ? null : getNodeByPath(parentPath(currentPath));
+  const index = currentPath === "" ? 0 : Number(currentPath.split(".").pop());
+
+  t.appendChild(navBar());
+  t.appendChild(renderNode(node, parent, depth, index));
+}
+
+function onSearch(v) { query = v; draw(); }
+
+const openSet = new WeakSet();   // حالة الفتح/القفل بس، مش بتتحفظ في الملف
+function isOpen(node, depth) {
+  return depth === 0 || !!query.trim() || openSet.has(node) || node === getNodeByPath(currentPath);
+}
+function toggleOpen(node) {
+  openSet.has(node) ? openSet.delete(node) : openSet.add(node);
+  draw();
+}
+
+function renderNode(node, parent, depth, index) {
+  const isRoot = depth === 0;
+  const wrap = document.createElement("div");
+  wrap.className = "node lvl-" + Math.min(depth, 4);
+
+  const head = document.createElement("div");
+  head.className = "node-head";
+  const tag = document.createElement("span");
+  tag.className = "lvl-tag";
+  tag.textContent = isRoot ? "قايمة رئيسية" : `مستوى ${depth}`;
+  head.appendChild(tag);
+  const title = document.createElement("div");
+  title.className = "title";
+  title.textContent = isRoot ? "🏠 القايمة الرئيسية (أول رسالة)" : (node.label || "زرار بدون اسم");
+  const hasKids = (node.items || []).length > 0;
+  if (hasKids) {
+    title.style.cursor = "pointer";
+    title.textContent = (isOpen(node, depth) ? "▾ " : "▸ ") + title.textContent;
+    title.onclick = () => { if (!isRoot) toggleOpen(node); else toggleOpen(node); };
+  }
+  head.appendChild(title);
+  if (!isRoot) {
+    const badge = document.createElement("span");
+    badge.className = "badge";
+    badge.textContent = node.items && node.items.length ? `${node.items.length} زرار جوه` : "نص فقط";
+    head.appendChild(badge);
+  }
+  wrap.appendChild(head);
+
+  if (!isRoot) {
+    const lbl = document.createElement("input");
+    lbl.placeholder = "اسم الزرار (اللي بيظهر للعميل)";
+    lbl.value = node.label || "";
+    lbl.oninput = () => { node.label = lbl.value; title.textContent = lbl.value || "زرار بدون اسم"; markDirty(); };
+    wrap.appendChild(lbl);
+    if (node.action !== "ask") {
+      const lk = document.createElement("label");
+      lk.className = "f";
+      lk.textContent = "🔑 كلمات الاستدعاء (اختياري، بفاصلة): الكلمات اللي لو العميل كتبها، الزرار ده يظهر له";
+      const ki = document.createElement("input");
+      ki.placeholder = "مثلاً: لجنة، عنوان، فين";
+      ki.value = (node.keywords || []).join("، ");
+      ki.oninput = () => {
+        const list = ki.value.split(/[،,]/).map((w) => w.trim()).filter(Boolean);
+        if (list.length) node.keywords = list; else delete node.keywords;
+        markDirty();
+      };
+      wrap.append(lk, ki);
+    }
+  }
+
+  const isAsk = node.action === "ask";
+  if (!isRoot && !isAsk) {
+    const lu = document.createElement("label");
+    lu.className = "f";
+    lu.textContent = "🔗 رابط (اختياري): لو اتملى، الزرار يفتح الرابط بدل ما يفتح قايمة";
+    const ui = document.createElement("input");
+    ui.placeholder = "https://t.me/H19806bot";
+    ui.value = node.url || "";
+    ui.oninput = () => { node.url = ui.value.trim() || undefined; markDirty(); };
+    wrap.append(lu, ui);
+  }
+
+  const lt = document.createElement("label");
+  lt.className = "f";
+  lt.textContent = "النص اللي يظهر للعميل";
+  if (!isAsk) wrap.appendChild(lt);
+
+  const ta = document.createElement("textarea");
+  ta.placeholder = "اكتب الرسالة هنا...";
+  ta.value = node.text || "";
+  const counter = document.createElement("div");
+  counter.className = "counter";
+  const updCount = () => (counter.textContent = `${(node.text || "").length} / 3500`);
+  ta.oninput = () => { node.text = ta.value; updCount(); markDirty(); };
+  updCount();
+  if (!isAsk) wrap.append(ta, counter);
+
+  // سحب وإفلات (ديسكتوب)
+  // السحب من العنوان بس (مش من الكارت كله) عشان تحديد النص داخل الخانات يشتغل عادي
+  if (!isRoot) {
+    head.draggable = true;
+    head.addEventListener("dragstart", (e) => { e.stopPropagation(); window._drag = node; wrap.classList.add("dragging"); });
+    head.addEventListener("dragend", () => { window._drag = null; wrap.classList.remove("dragging"); });
+  }
+  wrap.addEventListener("dragover", (e) => {
+    const src = window._drag;
+    if (!src || inside(src, node)) return;
+    if (depth + heightOf(src) > 4) return;
+    e.preventDefault(); e.stopPropagation();
+    wrap.classList.add("drop");
+  });
+  wrap.addEventListener("dragleave", () => wrap.classList.remove("drop"));
+  wrap.addEventListener("drop", (e) => {
+    const src = window._drag;
+    wrap.classList.remove("drop");
+    if (!src || inside(src, node)) return;
+    e.preventDefault(); e.stopPropagation();
+    removeNode(src);
+    node.items = node.items || [];
+    if (node.items.length >= 50) { toast("الحد 50 زرار في القايمة", "bad"); return; }
+    node.items.push(src);
+    window._drag = null;
+    markDirty();
+    draw();
+  });
+
+  // أزرار التحكم
+  const actions = document.createElement("div");
+  actions.className = "actions";
+
+  const saveBtn = document.createElement("button");
+  saveBtn.className = "ok";
+  saveBtn.textContent = "💾 حفظ";
+  saveBtn.title = "يحفظ الشجرة كلها";
+  saveBtn.onclick = () => save();
+  actions.appendChild(saveBtn);
+
+  const prev = document.createElement("button");
+  prev.className = "ghost";
+  prev.textContent = "👁 معاينة";
+  prev.onclick = () => previewNode(node);
+  actions.appendChild(prev);
+
+  const askBtn = document.createElement("button");
+  askBtn.className = "ghost";
+  askBtn.textContent = "💬 أضف زرار سؤال هنا";
+  askBtn.title = "بيضيف زرار جديد جوه القايمة دي: العميل يدوسه ويكتب سؤاله";
+  askBtn.onclick = () => {
+    if (depth >= 4) return toast("الحد الأقصى 4 مستويات", "bad");
+    if ((node.items || []).length >= 50) return toast("الحد 50 زرار في القايمة", "bad");
+    node.items = node.items || [];
+    node.items.push({ label: "💬 ابعت سؤالك", action: "ask", text: "", items: [] });
+    markDirty();
+    draw();
+  };
+
+  const addBtn = document.createElement("button");
+  addBtn.textContent = "➕ زرار جوه";
+  addBtn.onclick = () => {
+    if (depth >= 4) return toast("الحد الأقصى 4 مستويات", "bad");
+    if ((node.items || []).length >= 50) return toast("الحد 50 زرار في القايمة", "bad");
+    node.items = node.items || [];
+    node.items.push({ label: "زرار جديد", text: "", items: [] });
+    markDirty();
+    draw();
+  };
+  actions.appendChild(addBtn);
+  if (node.action !== "ask") actions.appendChild(askBtn);
+
+  if (!isRoot) {
+    const up = document.createElement("button");
+    up.className = "icon"; up.textContent = "⬆️"; up.title = "لفوق";
+    up.disabled = index === 0;
+    up.onclick = () => move(parent, index, -1);
+
+    const down = document.createElement("button");
+    down.className = "icon"; down.textContent = "⬇️"; down.title = "لتحت";
+    down.disabled = index === parent.items.length - 1;
+    down.onclick = () => move(parent, index, 1);
+
+    const dup = document.createElement("button");
+    dup.className = "icon"; dup.textContent = "📄"; dup.title = "تكرار";
+    dup.onclick = () => {
+      parent.items.splice(index + 1, 0, JSON.parse(JSON.stringify(node)));
+      markDirty(); draw();
+    };
+    actions.append(up, down, dup);
+
+    if (role === "admin") {
+      const del = document.createElement("button");
+      del.className = "danger"; del.textContent = "🗑 حذف";
+      del.onclick = async () => {
+        const ok = await confirmBox(`تحذف "${node.label || "الزرار ده"}" وكل اللي جواه؟`, "تأكيد الحذف", true);
+        if (ok) { parent.items.splice(index, 1); markDirty(); draw(); }
+      };
+      actions.appendChild(del);
+    }
+  }
+  wrap.appendChild(actions);
+
+  if (node.items && node.items.length && isOpen(node, depth)) {
+    const ch = document.createElement("div");
+    ch.className = "children";
+    node.items.forEach((c, i) => {
+      if (query.trim() && !matches(c, query.trim())) return;
+      ch.appendChild(renderNode(c, node, depth + 1, i));
+    });
+    wrap.appendChild(ch);
+  } else if (!isRoot && !hasKids) {
+    const e = document.createElement("div");
+    e.className = "empty";
+    e.textContent = isAsk
+      ? "💬 زرار سؤال: لما العميل يدوسه، بيفتح له خانة يكتب فيها سؤاله."
+      : "الزرار ده بيعرض نصه بس. ضيف زرار جوه لو عايز قايمة فرعية.";
+    wrap.appendChild(e);
+  }
+  return wrap;
+}
+
+function move(parent, index, dir) {
+  const j = index + dir;
+  if (j < 0 || j >= parent.items.length) return;
+  [parent.items[index], parent.items[j]] = [parent.items[j], parent.items[index]];
+  markDirty();
+  draw();
+}
+
+function discard() {
+  confirmBox("هيرجع المحرر لآخر نسخة محفوظة على GitHub، والتعديلات اللي ما اتحفظتش هتضيع. متأكد؟", "تراجع", true).then(async (ok) => {
+    if (!ok) return;
+    try {
+      data = (await api("get")).content;
+      dirty = false;
+      localStorage.removeItem(DRAFT_KEY);
+      draw();
+      setStatus("اتحمّلت آخر نسخة من GitHub", "ok");
+    } catch (e) { toast(e.message, "bad"); }
+  });
+}
+
+// ---------- الحفظ ----------
+function findIssues() {
+  const out = [];
+  allNodes().forEach(({ path, node }) => {
+    if (/\[[^\]]*\]/.test(node.text || "")) out.push(`نص فيه [ ] : ${pathLabel(path)}`);
+    if (node.action !== "ask" && !node.text && !(node.items || []).length) out.push(`نص فاضي : ${pathLabel(path)}`);
+  });
+  return out;
+}
+
+async function save() {
+  const issues = findIssues();
+  if (issues.length) {
+    const ok = await confirmBox(
+      `فيه ${issues.length} حاجة لسه مش مكتملة:\n\n${issues.slice(0, 6).join("\n")}\n\nتحفظ على أي حال؟`,
+      "احفظ على أي حال", false);
+    if (!ok) return;
+  }
+  try {
+    setStatus("جاري الحفظ...");
+    await api("save", { content: data, message: "تعديل من لوحة التحكم" });
+    dirty = false;
+    localStorage.removeItem(DRAFT_KEY);
+    setStatus("✅ اتحفظ. التعديل يظهر في البوت خلال دقيقة أو اتنين", "ok");
+    toast("تم الحفظ بنجاح", "ok");
+  } catch (e) {
+    setStatus("❌ " + e.message, "warn");
+    toast(e.message, "bad");
+  }
+}
+
+// ---------- المعاينة ----------
+function previewNode(node) {
+  const kids = (node.items || []).map((c) => `<div>${esc(c.label || "")}</div>`).join("");
+  modal(`
+    <h2 style="margin:0 0 10px">👁 معاينة الرسالة</h2>
+    <div class="phone">
+      <div class="bubble">${esc(node.text || "(نص فاضي)")}</div>
+      ${kids ? `<div class="kbd">${kids}</div>` : ""}
+      ${node.items ? '<div class="kbd"><div>🔙 رجوع</div></div>' : ""}
+    </div>
+    <div class="row" style="margin-top:14px"><button class="ghost" data-r="0">إغلاق</button></div>`);
+}
+
+function previewRoot() { previewNode(data); }
+
+function esc(s) {
+  return String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+}
+
+// ---------- الإحصائيات ----------
+// اسم الزرار من المفتاح المحفوظ: لو الزرار اتغير أو اتحذف بنضيف تنبيه
+function statLabel(key) {
+  const [p, l] = key.split("|");
+  if (!l) return pathLabel(p);
+  const node = getNodeByPath(p);
+  const same = node && node.label === l;
+  return same ? l : `${l} (اتغير أو اتحذف)`;
+}
+
+let lastStats = null;
+let lastHoursView = {};
+let lastHoursDate = "";
+
+function exportHours() {
+  const hrs = lastHoursView || {};
+  excelDownload(`أوقات_الذروة_${lastHoursDate || "الإجمالي"}.xls`, [["الساعة", "الضغطات"], ...Array.from({ length: 24 }, (_, h) => [`${h}:00`, Number(hrs[h] || 0)])]);
+}
+
+// تجميع الضغطات باسم الزرار بدل مكانه (عشان الأرقام ما تضيعش لو الزراير اتحركت)
+// الزراير اللي اسمها مش موجود في القايمة خالص (محذوفة) ما بتظهرش
+function labelUsage(obj) {
+  const names = new Set(allNodes().map(({ node }) => node.label));
+  const out = {};
+  Object.entries(obj || {}).forEach(([k, v]) => {
+    const l = k.includes("|") ? k.split("|")[1] : k;
+    if (!l || !names.has(l)) return;
+    out[l] = (out[l] || 0) + Number(v || 0);
+  });
+  return out;
+}
+
+function currentUsed(st) {
+  return labelUsage(st.pressByPath7d);
+}
+
+function csvDownload(fileName, rows) {
+  const esc = (v) => `"${String(v ?? "").replace(/"/g, '""')}"`;
+  const csv = "\uFEFF" + rows.map((r) => r.map(esc).join(",")).join("\r\n");
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
+  a.download = fileName;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+}
+
+// ملف Excel بصيغة HTML متوافقة مع Excel، بدون مكتبة خارجية أو فقدان النص العربي.
+function excelDownload(fileName, rows) {
+  const cell = (v) => `<td style="mso-number-format:'\@';">${esc(v)}</td>`;
+  const html = `<!DOCTYPE html><html dir="rtl"><head><meta charset="utf-8"></head><body><table>${rows.map((r, i) => `<tr>${r.map(cell).join("")}</tr>`).join("")}</table></body></html>`;
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob(["\uFEFF", html], { type: "application/vnd.ms-excel;charset=utf-8" }));
+  a.download = fileName.endsWith(".xls") ? fileName : `${fileName}.xls`;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+}
+
+const today = () => new Date().toLocaleDateString("en-CA", { timeZone: "Africa/Cairo" });
+const cairoDate = (ms) => new Date(Number(ms)).toLocaleDateString("en-CA", { timeZone: "Africa/Cairo" });
+
+function dailyRows(st) {
+  return [["التاريخ", "مشتركين جداد", "ضغطات"], ...st.daily.map((d) => [d.date, d.newSubs, d.presses])];
+}
+function buttonRows(st) {
+  const used = currentUsed(st);
+  return [["الزرار", "الضغطات (7 أيام)"], ...Object.entries(used)
+    .sort((a, b) => b[1] - a[1])
+    .map(([k, v]) => [k.split("|")[1], v])];
+}
+function exportDaily() { if (lastStats) csvDownload(`يومي_${today()}.csv`, dailyRows(lastStats)); }
+function exportButtons() { if (lastStats) csvDownload(`الزراير_${today()}.csv`, buttonRows(lastStats)); }
+
+function exportAll() {
+  if (!lastStats) return;
+  const st = lastStats;
+  const rows = [
+    ["ملخص"],
+    ["إجمالي المشتركين (تقريبي)", st.subscribersTotal],
+    ["نشطين النهاردة", st.subscribersToday],
+    ["ضغطات النهاردة", st.pressesToday],
+    ["ضغطات امبارح", st.pressesYesterday],
+    [],
+    ...dailyRows(st), [],
+    ...buttonRows(st),
+  ];
+  csvDownload(`تقرير_البوت_${today()}.csv`, rows);
+}
+
+function openReport() {
+  if (!lastStats) return;
+  const st = lastStats;
+  const table = (rows) => {
+    const [head, ...body] = rows;
+    return `<table><tr>${head.map((h) => `<th>${esc(h)}</th>`).join("")}</tr>${
+      body.map((r) => `<tr>${r.map((c) => `<td>${esc(c)}</td>`).join("")}</tr>`).join("")}</table>`;
+  };
+  const html = `<!DOCTYPE html><html dir="rtl" lang="ar"><head><meta charset="utf-8">
+  <title>تقرير البوت ${today()}</title>
+  <style>
+    body{font-family:"Segoe UI",Tahoma,sans-serif;margin:24px;color:#1d2939}
+    h1{color:#1f3a5f} h2{color:#2e6be6;margin-top:24px}
+    .kpis{display:flex;gap:12px;flex-wrap:wrap} .kpi{border:1px solid #e4e8f0;border-radius:10px;padding:12px 16px;min-width:160px}
+    .kpi b{font-size:22px;display:block}
+    table{width:100%;border-collapse:collapse;margin-top:8px;font-size:14px}
+    th,td{border-bottom:1px solid #e4e8f0;padding:8px;text-align:right} th{background:#f8fafc}
+    @media print{ button{display:none} body{margin:10mm} }
+  </style></head><body>
+  <h1>تقرير بوت اللجان الطبية</h1>
+  <p>تاريخ التقرير: ${today()}</p>
+  <div class="kpis">
+    <div class="kpi"><b>${st.subscribersTotal}</b>إجمالي المشتركين (تقريبي)</div>
+    <div class="kpi"><b>${st.subscribersToday}</b>نشطين النهاردة</div>
+    <div class="kpi"><b>${st.pressesToday}</b>ضغطات النهاردة</div>
+    <div class="kpi"><b>${st.pressesYesterday}</b>ضغطات امبارح</div>
+  </div>
+  <h2>يومي (آخر 7 أيام)</h2>${table(dailyRows(st))}
+  <h2>أكتر الزراير استخداماً</h2>${table(buttonRows(st))}
+  <br><button onclick="window.print()">🖨 طباعة / حفظ PDF</button>
+  </body></html>`;
+  const w = window.open("", "_blank");
+  if (!w) return toast("اسمح بالنوافذ المنبثقة عشان التقرير يفتح", "bad");
+  w.document.write(html);
+  w.document.close();
+}
+
+function esc(v) {
+  return String(v ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+}
+
+// ---------- الأسئلة ----------
+let questionsCache = [];
+let extrasCache = {}, defaultFuLimit = 3;   // زيادات حد المتابعات لكل عميل (من السيرفر)
+const fuLimit = (chatId) => defaultFuLimit + (Number(extrasCache[String(chatId)]) || 0);   // الإضافي الدائم القديم فقط
+const fuLimitQ = (x) => fuLimit(x.chatId) + (Number(x.extraFollowups) || 0);   // حد سؤال معيّن = الافتراضي + الدائم القديم + زيادة السؤال
+const PAGE_SIZE = 50;   // نرسم 50 صف بس في المرة (الباقي بزرار "عرض المزيد") علشان الصفحة ما تتقلش
+let qLimit = PAGE_SIZE, aLimit = PAGE_SIZE, lastQSig = "", lastASig = "";
+let customersCache = {};   // chatId -> بيانات العميل (الاسم/username/الرقم للأدمن فقط/حالة المشاركة)
+let qFilter = null, aFilter = null;   // فلتر الكروت: qFilter = open | followup_pending ، aFilter = closed
+let custIdx = {};   // chatId -> { n: عدد أسئلته, first: أقدم سؤال } (بيتحسب مرة واحدة بدل ما يتحسب لكل صف)
+function setQuestionsData(r) {
+  customersCache = r.customers || {}; questionsCache = r.questions;
+  custIdx = {};
+  for (const x of r.questions) { const e = (custIdx[String(x.chatId)] ||= { n: 0, first: Infinity }); e.n++; if (x.t < e.first) e.first = x.t; }
+  if (r.intake) intakeState = r.intake; extrasCache = r.extras || {}; defaultFuLimit = r.defaultFollowupLimit || 10; updateQuestionCards(); }
+function normQ(q) { return q.trim().replace(/\s+/g, " ").toLowerCase(); }
+function customerQuestions(chatId) {
+  return chatId ? questionsCache.filter((x) => x.chatId === chatId) : [];
+}
+function answerEntries(x) {
+  if (Array.isArray(x.answerHistory) && x.answerHistory.length) return x.answerHistory;
+  return x.answer ? [{ t: x.answeredAt || x.t, text: x.answer, messageId: null }] : [];
+}
+
+const limitBtn = (chatId) => `<button class="ghost" style="margin-bottom:6px" title="زيادة حد المتابعات لهذا العميل" onclick='openLimitDialog(${JSON.stringify(String(chatId))})'>➕ متابعات</button>`;
+
+// نافذة إدارة حد المتابعات لعميل (أدمن فقط؛ السيرفر بيتحقق من الصلاحية برضه)
+async function openLimitDialog(chatId) {
+  let info;
+  try { info = await api("followupLimitInfo", { ref: String(chatId) }); }
+  catch (e) { return toast(e.message, "bad"); }
+  const requestId = crypto.randomUUID();   // يمنع تنفيذ نفس الطلب مرتين
+  const bg = document.createElement("div");
+  bg.className = "modal-bg";
+  const OP = { add: "➕ زيادة", sub: "➖ نقص", clear: "🗑 حذف زيادة السؤال", clearPermanent: "🗑 حذف الإضافي الدائم" };
+  const logRows = (info.log || []).map((l) => `<tr><td>${esc(fmtTime(l.t))}</td><td>${esc(l.admin)}</td><td>${esc(OP[l.op] || "➕ زيادة (قديمة ودائمة)")}</td><td>${esc(l.prevLimit)}</td><td dir="ltr">${l.added > 0 ? "+" : ""}${esc(l.added)}</td><td>${esc(l.newLimit)}</td></tr>`).join("");
+  const stLabel = { open: "جديد", awaiting_followup: "بانتظار متابعة العميل", followup_pending: "متابعة بانتظار الرد", archived: "مغلق", answered: "مؤرشف" }[info.questionStatus] || "";
+  const can = info.canAdjust;
+  bg.innerHTML = `<div class="modal" style="width:min(480px,100%)">
+    <h2 style="margin:0 0 10px">➕ حد المتابعات</h2>
+    <div class="card" style="padding:12px;margin-bottom:10px;line-height:1.9">
+      <b>${esc(info.customerName || "غير معروف")}</b><br>
+      <span class="muted">Telegram User ID:</span> <span dir="ltr">${esc(info.chatId)}</span><br>
+      <span class="muted">الحد الافتراضي:</span> ${info.defaultLimit}<br>
+      <span class="muted">زيادة السؤال الحالي:</span> ${info.questionExtra} <span class="muted">(بتنتهي بانتهاء السؤال)</span><br>
+      ${info.permanentExtra ? `<span class="muted">إضافي دائم (قديم):</span> ${info.permanentExtra}<br>` : ""}
+      <span class="muted">الحد الإجمالي للسؤال الحالي:</span> <b>${info.totalLimit}</b><br>
+      <span class="muted">السؤال الحالي:</span> ${info.questionId ? `${esc(stLabel)} · استخدم ${info.used} · متبقي ${info.remaining}` : "لا يوجد سؤال"}
+    </div>
+    ${can ? "" : '<div class="status warn" style="margin-bottom:8px">مفيش سؤال شغّال للعميل ده، فالزيادة والنقص غير متاحين. الزيادة بتتطبق على السؤال المفتوح بس.</div>'}
+    <label class="f">عدد المتابعات (رقم صحيح من 1 إلى 100)</label>
+    <input id="lim-amount" type="number" min="1" max="100" step="1" inputmode="numeric" placeholder="مثال: 5" ${can ? "" : "disabled"}>
+    <div id="lim-preview" class="muted" style="margin-top:6px"></div>
+    <div id="lim-err" class="status" style="color:var(--bad);margin-top:6px"></div>
+    <div class="row" style="margin-top:12px;justify-content:flex-start;flex-wrap:wrap">
+      <button class="ok" id="lim-add" ${can ? "" : "disabled"}>➕ زيادة</button>
+      <button class="ghost" id="lim-sub" ${can && info.questionExtra ? "" : "disabled"}>➖ نقص</button>
+      <button class="danger" id="lim-clear" ${can && info.questionExtra ? "" : "disabled"}>🗑 حذف زيادة السؤال</button>
+    </div>
+    ${info.permanentExtra ? `<div style="margin-top:8px"><button class="danger" id="lim-clearp">🗑 حذف الإضافي الدائم (${info.permanentExtra})</button></div>` : ""}
+    <div class="row" style="margin-top:12px"><button class="ghost" id="lim-cancel">إغلاق</button></div>
+    ${logRows ? `<h3 style="margin:16px 0 6px;font-size:14px">سجل العمليات لهذا العميل</h3><div style="overflow:auto;max-height:160px"><table><tr><th>الوقت</th><th>المسؤول</th><th>العملية</th><th>السابق</th><th>التغيير</th><th>الجديد</th></tr>${logRows}</table></div>` : ""}
+  </div>`;
+  document.body.appendChild(bg);
+  const input = bg.querySelector("#lim-amount"), err = bg.querySelector("#lim-err");
+  const parse = () => { const v = input.value.trim(); return /^\d+$/.test(v) && +v >= 1 && +v <= 100 ? +v : null; };
+  const badMsg = "أدخل رقم صحيح من 1 إلى 100 (بدون صفر أو سالب أو كسور)";
+  input.addEventListener("input", () => {
+    const n = parse();
+    err.textContent = input.value.trim() && n === null ? badMsg : "";
+    bg.querySelector("#lim-preview").textContent = n === null ? "" : `بعد الزيادة: ${info.totalLimit + n}${info.questionExtra >= n ? ` · بعد النقص: ${info.totalLimit - n}` : ""}`;
+  });
+  const close = () => bg.remove();
+  bg.querySelector("#lim-cancel").onclick = close;
+  bg.addEventListener("click", (e) => { if (e.target === bg) close(); });
+  const run = async (op, needAmount, confirmText) => {
+    let amount;
+    if (needAmount) { amount = parse(); if (amount === null) { err.textContent = badMsg; return; } }
+    if (confirmText && !confirm(confirmText)) return;
+    bg.querySelectorAll("button").forEach((b) => (b.disabled = true));
+    try {
+      const r = await api("adjustFollowupLimit", { ref: String(chatId), op, amount, requestId });
+      toast(`${OP[op]}: الحد ${r.prevLimit} ← ${r.newLimit}${r.reopened ? " (وتم فتح آخر سؤال للمتابعة)" : ""}`, "ok");
+      if (op === "add" && !r.notified) toast("تم حفظ الزيادة لكن تعذّر إرسال الإشعار للعميل", "bad");
+      close(); loadQuestions();
+    } catch (e) { err.textContent = e.message; bg.querySelectorAll("button").forEach((b) => (b.disabled = false)); }
+  };
+  bg.querySelector("#lim-add").onclick = () => run("add", true);
+  bg.querySelector("#lim-sub").onclick = () => run("sub", true);
+  bg.querySelector("#lim-clear").onclick = () => run("clear", false, "حذف كل زيادة المتابعات على السؤال الحالي؟ الحد هيرجع للافتراضي.");
+  const cp = bg.querySelector("#lim-clearp"); if (cp) cp.onclick = () => run("clearPermanent", false, "حذف الإضافي الدائم لهذا العميل؟ الحد هيرجع للافتراضي.");
+  input.focus();
+}
+
+function showCustomerHistory(chatId) {
+  const items = customerQuestions(chatId);
+  if (!items.length) return;
+  const customerName = items.find((x) => x.customerName)?.customerName || "غير معروف";
+  const body = items.map((x, i) => `
+    <div class="card" style="margin:8px 0;padding:12px">
+      <div class="row" style="margin-bottom:6px"><b>المحادثة ${items.length - i}</b><span class="${x.status === "answered" ? "status ok" : "status warn"}">${x.status === "answered" ? "✅ تم الإرسال" : "⏳ لم تتم الإجابة"}</span></div>
+      ${threadHtml(x)}
+    </div>`).join("");
+  modal(`<h2 style="margin:0 0 10px">👤 سجل أسئلة العميل</h2>
+    <div class="card" style="padding:10px;margin-bottom:8px">${custInfoHtml({ chatId, customerName })}</div>
+    <p class="muted">عدد الأسئلة المسجلة لهذا العميل: ${items.length}</p>
+    <div style="max-height:62vh;overflow:auto">${body}</div>
+    <div class="row" style="margin-top:14px"><button class="ghost" data-r="0">إغلاق</button></div>`);
+}
+
+
+// ---------- الإجابات السريعة ----------
+function renderQuickList() {
+  if (!data) return;
+  const list = Array.isArray(data.quickReplies) ? data.quickReplies : [];
+  const cnt = $("quickCount");
+  if (cnt) cnt.textContent = list.length ? `${list.length} إجابة` : "فاضية";
+  const box = $("quickList");
+  if (!box) return;
+  if (!list.length) { box.innerHTML = '<div class="muted">مفيش إجابات سريعة بعد.</div>'; return; }
+  box.innerHTML = list.map((q, i) => `
+    <div class="node" style="margin:6px 0">
+      <div class="row"><b>${esc(q.title || "بدون عنوان")}</b>
+        <div class="row" style="gap:6px"><button class="ghost" onclick="openQuickEditor(${i})">✏️ تعديل</button><button class="danger" onclick="deleteQuick(${i})">🗑 حذف</button></div></div>
+      <div class="muted" style="white-space:pre-wrap;margin-top:4px">${esc((q.text || "").slice(0, 160))}${(q.text || "").length > 160 ? "…" : ""}</div>
+    </div>`).join("");
+}
+
+
+// نافذة إدارة الإجابات السريعة (بتتفتح من صفحة الأسئلة)
+function openQuickManager() {
+  if (!data) return;
+  const bg = document.createElement("div");
+  bg.className = "modal-bg";
+  bg.innerHTML = `<div class="modal" style="width:min(720px,100%)">
+    <div class="row"><h2 style="margin:0">⚡ الإجابات السريعة</h2><button class="ok" id="qmAdd">➕ إضافة</button></div>
+    <p class="muted" style="margin:6px 0 10px">بعد أي تعديل اضغط 💾 حفظ عشان يتثبت للبوت.</p>
+    <div id="quickList" style="max-height:60vh;overflow:auto"></div>
+    <div class="row" style="margin-top:12px;justify-content:flex-start;gap:8px">
+      <button class="ok" id="qmSave">💾 حفظ</button><button class="ghost" id="qmClose">إغلاق</button></div></div>`;
+  document.body.appendChild(bg);
+  bg.querySelector("#qmAdd").onclick = () => openQuickEditor(null);
+  bg.querySelector("#qmSave").onclick = () => save();
+  bg.querySelector("#qmClose").onclick = () => bg.remove();
+  bg.addEventListener("click", (e) => { if (e.target === bg) bg.remove(); });
+  renderQuickList();
+}
+
+function openQuickEditor(index) {
+  if (!data.quickReplies) data.quickReplies = [];
+  const isNew = index === null;
+  if (isNew && data.quickReplies.length >= 50) return toast("الحد 50 إجابة سريعة", "bad");
+  const cur = isNew ? { title: "", text: "" } : data.quickReplies[index];
+  const bg = document.createElement("div");
+  bg.className = "modal-bg";
+  bg.innerHTML = `<div class="modal" style="width:min(640px,100%)">
+    <h2 style="margin:0 0 10px">${isNew ? "➕ إجابة سريعة جديدة" : "✏️ تعديل الإجابة السريعة"}</h2>
+    <label class="f">عنوان قصير (حد 80 حرف)</label>
+    <input id="qkTitle" maxlength="80" value="${esc(cur.title)}" style="font-size:16px" placeholder="مثلاً: العنوان">
+    <label class="f">نص الإجابة (حد 3500 حرف)</label>
+    <textarea id="qkText" rows="10" maxlength="3500" style="font-size:16px" placeholder="اكتب الإجابة كاملة هنا...">${esc(cur.text)}</textarea>
+    <div class="row" style="margin-top:12px;justify-content:flex-start;gap:8px">
+      <button class="ok" id="qkSave">💾 حفظ</button><button class="ghost" id="qkCancel">إلغاء</button></div></div>`;
+  document.body.appendChild(bg);
+  bg.querySelector("#qkCancel").onclick = () => bg.remove();
+  bg.addEventListener("click", (e) => { if (e.target === bg) bg.remove(); });
+  bg.querySelector("#qkSave").onclick = () => {
+    const title = bg.querySelector("#qkTitle").value.trim().slice(0, 80);
+    const text = bg.querySelector("#qkText").value.slice(0, 3500);
+    if (!title || !text.trim()) return toast("اكتب العنوان والنص", "bad");
+    if (isNew) data.quickReplies.push({ title, text }); else data.quickReplies[index] = { title, text };
+    markDirty();
+    renderQuickList();
+    bg.remove();
+    toast("اتضافت في القايمة. اضغط 💾 حفظ عشان تتثبت", "ok");
+  };
+  setTimeout(() => bg.querySelector("#qkText").focus(), 50);
+}
+
+async function deleteQuick(index) {
+  const ok = await confirmBox("تحذف الإجابة السريعة دي؟", "حذف", true);
+  if (!ok) return;
+  data.quickReplies.splice(index, 1);
+  markDirty();
+  renderQuickList();
+}
+
+// زرار ⚡ جنب كل خانة إجابة: يفتح القايمة ويحط النص في الخانة (من غير إرسال)
+function openQuick(targetId) {
+  const list = Array.isArray(data.quickReplies) ? data.quickReplies : [];
+  if (!list.length) return toast("مفيش إجابات سريعة. ضيفها من تبويب الأسئلة", "bad");
+  const bg = document.createElement("div");
+  bg.className = "modal-bg";
+  const box = document.createElement("div");
+  box.className = "modal";
+  box.innerHTML = `<h2 style="margin:0 0 10px">⚡ اختار إجابة سريعة</h2>`;
+  list.forEach((q) => {
+    const b = document.createElement("button");
+    b.style.cssText = "display:block;width:100%;text-align:right;margin:6px 0;padding:10px";
+    b.textContent = q.title || (q.text || "").slice(0, 40);
+    b.onclick = () => {
+      const ta = document.getElementById(targetId);
+      if (ta) { ta.value = (ta.value ? ta.value + "\n" : "") + q.text; ta.focus(); }
+      bg.remove();
+    };
+    box.appendChild(b);
+  });
+  const close = document.createElement("button");
+  close.className = "ghost";
+  close.textContent = "إغلاق";
+  close.style.marginTop = "8px";
+  close.onclick = () => bg.remove();
+  box.appendChild(close);
+  bg.appendChild(box);
+  bg.addEventListener("click", (e) => { if (e.target === bg) bg.remove(); });
+  document.body.appendChild(bg);
+}
+
+function addQuickButtons() {
+  document.querySelectorAll('textarea[id^="answer-"], textarea[id^="archive-answer-"]').forEach((ta) => {
+    if (ta.dataset.quick) return;
+    ta.dataset.quick = "1";
+    const b = document.createElement("button");
+    b.className = "icon";
+    b.textContent = "⚡ إجابة سريعة";
+    b.style.marginTop = "6px";
+    b.onclick = () => openQuick(ta.id);
+    ta.insertAdjacentElement("afterend", b);
+  });
+}
+new MutationObserver(() => addQuickButtons()).observe(document.body, { childList: true, subtree: true });
+
+// ---------- الجرس ----------
+function updateBell() {
+  const btn = $("bellBtn");
+  if (!btn) return;
+  const n = (questionsCache || []).filter((x) => x.status === "open" || x.status === "followup_pending").length;
+  btn.classList.toggle("hidden", !creds);
+  $("bellCount").textContent = n ? `(${n})` : "";
+  btn.style.color = n ? "var(--bad)" : "";
+}
+function openQuestionsFromBell() { showTab("questions"); }
+
+// ---------- التحديث التلقائي للأسئلة: كل دقيقة، ويتوقف بعد 5 دقائق خمول ----------
+let autoTimer = null;
+const AUTO_REFRESH_MS = 60 * 1000;
+const DASHBOARD_IDLE_MS = 5 * 60 * 1000;
+let lastDashboardActivity = Date.now();
+function startAutoRefresh() {
+  if (autoTimer) clearInterval(autoTimer);
+  lastDashboardActivity = Date.now();
+  autoTimer = setInterval(() => {
+    if (!creds || document.hidden || Date.now() - lastDashboardActivity >= DASHBOARD_IDLE_MS) {
+      clearInterval(autoTimer); autoTimer = null; return;
+    }
+    refreshQuestionsSilently();
+  }, AUTO_REFRESH_MS);
+}
+// أول ما ترجع للتاب (بعد ما كان في الخلفية) نحدّث فوراً، لأن المتصفح بيوقف المؤقتات في التابات المخفية
+let lastQRefresh = 0;
+function refreshOnReturn() {
+  if (!creds || document.hidden) return;
+  lastDashboardActivity = Date.now();
+  if (!autoTimer) startAutoRefresh();
+  if (Date.now() - lastQRefresh > 3000) refreshQuestionsSilently();
+}
+document.addEventListener("visibilitychange", refreshOnReturn);
+window.addEventListener("focus", refreshOnReturn);
+window.addEventListener("online", refreshOnReturn);
+function noteDashboardActivity() {
+  if (!creds || document.hidden) return;
+  lastDashboardActivity = Date.now();
+  if (!autoTimer) startAutoRefresh();
+}
+document.addEventListener("pointerdown", noteDashboardActivity, { passive: true });
+document.addEventListener("keydown", noteDashboardActivity, { passive: true });
+document.addEventListener("touchstart", noteDashboardActivity, { passive: true });
+async function refreshQuestionsSilently() {
+  if (!creds || document.hidden) return;
+  lastQRefresh = Date.now();
+  try {
+    const wasOn = intakeState ? intakeState.enabled : null;
+    setQuestionsData(await api("questions"));
+    if (intakeState && wasOn !== intakeState.enabled && document.activeElement?.id !== "intakeMsg") renderIntake();
+    updateBell();
+    const open = !$("tab-questions").classList.contains("hidden");
+    // ما نرسمش من جديد لو فيه رد مكتوب ولسه ما اتبعتش
+    const typing = [...document.querySelectorAll('textarea[id^="answer-"], textarea[id^="archive-answer-"]')]
+      .some((t) => t.value.trim() && t.offsetParent);
+    if (open && !typing) { renderQuestions(); renderArchive(); }
+  } catch {}
+}
+
+async function loadQuestions() {
+  try {
+    setQuestionsData(await api("questions"));
+    renderQuestions();
+    renderArchive();
+    updateBell();
+    renderQuickList();
+    if (document.activeElement?.id !== "intakeMsg") renderIntake();
+    if (role === "admin" && notifyState === null) loadNotify();
+  } catch (e) { toast(e.message, "bad"); }
+}
+
+// ---------- بيانات العميل بجوار الأسئلة ----------
+const PHONE_STATE_LABEL = {
+  phone_shared: "✅ شارك رقمه",
+  phone_skipped: "⏭️ اختار الاستمرار بدون مشاركة",
+  phone_prompted: "👀 ظهر له الطلب ولم يختر",
+  phone_not_requested: "🕓 لم يظهر له طلب المشاركة بعد",
+};
+function custInfoHtml(x) {
+  const id = String(x.chatId || "");
+  const c = customersCache[id] || {};
+  const name = c.name || x.customerName || "غير معروف";
+  const uname = c.username || x.username || "";
+  let phone;
+  if (c.phone) phone = `<span dir="ltr">${esc(c.phone)}</span>`;
+  else if (c.hasPhone && role === "admin") phone = "⚠️ تعذّر فك تشفير الرقم (راجع PHONE_ENC_KEY)";
+  else if (c.hasPhone) phone = "🔒 غير مصرح لك بعرض الرقم";
+  else phone = "لم تتم مشاركة رقم الهاتف";
+  const ix = id ? custIdx[id] : null;
+  const first = c.firstSeen || (ix ? ix.first : null);
+  return `<b>${esc(name)}</b>${uname ? ` <span class="muted" dir="ltr">@${esc(uname)}</span>` : ""}
+    <div class="cinfo">📱 ${phone}${id ? `<br>🆔 <span dir="ltr">${esc(id)}</span> <span style="opacity:.7">(Telegram User ID / Chat ID)</span>` : ""}${first ? `<br>🗓 أول تفاعل مسجل: ${esc(fmtTime(first))}` : ""}</div>`;
+}
+// البحث بالاسم / Username / Telegram ID / رقم الهاتف (الرقم متاح للأدمن فقط لأن السيرفر هو اللي بيبعته)
+function custSearchMatch(x, raw) {
+  const q = String(raw || "").trim().toLowerCase().replace(/^@/, "");
+  if (!q) return true;
+  const c = customersCache[String(x.chatId)] || {};
+  if ([c.name, x.customerName, c.username, x.username, String(x.chatId || "")].join(" ").toLowerCase().includes(q)) return true;
+  const d = q.replace(/\D/g, "");
+  return d.length >= 3 && !!c.phone && c.phone.replace(/\D/g, "").includes(d);
+}
+function filterChip(id, text, clearFn) {
+  const el = $(id);
+  if (el) el.innerHTML = text ? `<span class="fchip">${esc(text)} <button title="إلغاء الفلتر" onclick="${clearFn}()">✖</button></span>` : "";
+}
+function clearQFilter() { qFilter = null; renderQuestions(); }
+function clearAFilter() { aFilter = null; renderArchive(); }
+function goQuestions(f) { qFilter = f; showTab("questions"); }
+function goArchive(f) { aFilter = f; showTab("archive"); }
+
+// ---------- مفتاح استقبال الأسئلة الجديدة ----------
+let intakeState = null;
+async function loadIntake() { try { intakeState = await api("getIntake"); } catch {} renderIntake(); }
+let intakeOpen = false;   // الكارت مطوي افتراضياً (بيظهر منه العنوان والحالة والمفتاح بس)
+try { intakeOpen = sessionStorage.getItem("intake-open") === "1"; } catch {}
+function toggleIntakePanel() {
+  intakeOpen = !intakeOpen;
+  try { sessionStorage.setItem("intake-open", intakeOpen ? "1" : "0"); } catch {}
+  const d = $("intakeDetails"), a = $("intakeArrow");
+  if (d) d.style.display = intakeOpen ? "block" : "none";
+  if (a) { a.textContent = intakeOpen ? "▴" : "▾"; a.setAttribute("aria-expanded", String(intakeOpen)); }
+}
+function renderIntake() {
+  const el = $("intakeCard");
+  if (!el || !intakeState) return;
+  const on = intakeState.enabled, isAdmin = role === "admin";
+  el.innerHTML = `<div class="row" style="align-items:center">
+      <div><h2 style="margin:0">📥 استقبال الأسئلة الجديدة</h2>
+        <div class="${on ? "status ok" : "status warn"}" style="margin-top:6px">${on ? "✅ استقبال الأسئلة مفعل" : "⏸️ استقبال الأسئلة متوقف مؤقتاً"}</div></div>
+      <div style="display:flex;align-items:center;gap:14px">
+        <label class="sw" title="${isAdmin ? "تفعيل / إيقاف" : "للأدمن فقط"}"><input type="checkbox" id="intakeToggle" ${on ? "checked" : ""} ${isAdmin ? "" : "disabled"} onchange="toggleIntake(this.checked)"><span class="slider"></span></label>
+        <button class="ghost" id="intakeArrow" onclick="toggleIntakePanel()" title="إظهار / إخفاء الإعدادات" aria-expanded="${intakeOpen}" style="padding:2px 10px;font-size:18px;line-height:1.4">${intakeOpen ? "▴" : "▾"}</button>
+      </div>
+    </div>
+    <div id="intakeDetails" style="display:${intakeOpen ? "block" : "none"}">
+      ${intakeState.updatedBy ? `<div class="muted" style="margin-top:8px">آخر تغيير بواسطة ${esc(intakeState.updatedBy)} · ${esc(fmtTime(intakeState.updatedAt))}</div>` : ""}
+      <p class="muted" style="margin:8px 0">الإيقاف بيمنع إنشاء أسئلة جديدة فقط. المتابعات والردود والأرشيف والبحث والإجابات التلقائية بتفضل شغالة.</p>
+      ${isAdmin ? `<label class="muted">رسالة الاعتذار اللي بتظهر للعميل لما يضغط «ابعت سؤالك» (سيبها فاضية للنص الافتراضي)</label>
+        <textarea id="intakeMsg" rows="3" placeholder="${esc(intakeState.defaultMessage || "")}">${esc(intakeState.message || "")}</textarea>
+        <div class="row" style="margin-top:8px;justify-content:flex-start"><button class="ok" onclick="saveIntakeMessage()">💾 حفظ الرسالة</button></div>` : ""}
+    </div>`;
+}
+async function toggleIntake(enabled) {
+  const box = $("intakeToggle");
+  if (!confirm(enabled ? "تفعيل استقبال الأسئلة الجديدة؟" : "إيقاف استقبال الأسئلة الجديدة مؤقتاً؟\nالعملاء هيشوفوا رسالة اعتذار عند الضغط على «ابعت سؤالك»، والمتابعات على الأسئلة القديمة هتفضل شغالة.")) { if (box) box.checked = !enabled; return; }
+  try {
+    intakeState = await api("setIntake", { enabled });
+    toast(enabled ? "تم تفعيل استقبال الأسئلة" : "تم إيقاف استقبال الأسئلة مؤقتاً", "ok");
+  } catch (e) { toast(e.message, "bad"); }
+  renderIntake();
+}
+async function saveIntakeMessage() {
+  try {
+    intakeState = await api("setIntake", { enabled: intakeState.enabled, message: $("intakeMsg").value });
+    toast("تم حفظ رسالة الاعتذار", "ok");
+  } catch (e) { toast(e.message, "bad"); }
+  renderIntake();
+}
+
+// ---------- تنبيهات الموظفين على تيليجرام (أدمن فقط) ----------
+let notifyState = null, notifyOpen = false, notifyCode = null, notifyPollTimer = null, NOTIFY_POLL_MS = 60000;
+try { notifyOpen = sessionStorage.getItem("notify-open") === "1"; } catch {}
+const NF_TYPE = { private: "خاص", group: "جروب", supergroup: "جروب", channel: "قناة" };
+async function loadNotify() {
+  if (role !== "admin") return;
+  try { notifyState = await api("notifyGet"); } catch { return; }
+  renderNotify();
+}
+function toggleNotifyPanel() {
+  notifyOpen = !notifyOpen;
+  try { sessionStorage.setItem("notify-open", notifyOpen ? "1" : "0"); } catch {}
+  const d = $("notifyDetails"), a = $("notifyArrow");
+  if (d) d.style.display = notifyOpen ? "block" : "none";
+  if (a) a.textContent = notifyOpen ? "▴" : "▾";
+}
+function renderNotifyChats() {
+  const el = $("nf-chats");
+  if (!el || !notifyState) return;
+  const chats = notifyState.chats || [];
+  el.innerHTML = chats.length ? chats.map((c) => `<div class="card" style="padding:10px;margin:6px 0">
+      <div class="row"><div><b>${esc(c.label || "بدون اسم")}</b> <span class="chip">${esc(NF_TYPE[c.type] || c.type || "")}</span>
+        <div class="muted" style="font-size:12px">اتربطت ${esc(fmtTime(c.linkedAt))}</div></div>
+        <button class="danger" onclick='notifyUnlink(${JSON.stringify(c.chatId)})'>فصل</button></div>
+      ${c.lastError ? `<div class="status warn" style="margin-top:6px">⚠️ آخر خطأ: ${esc(c.lastError)}</div>` : ""}</div>`).join("")
+    : '<div class="muted">مفيش محادثات مربوطة لسه.</div>';
+  const st = $("nf-status");
+  if (st) st.textContent = !notifyState.config.enabled ? "⏸️ التنبيهات متوقفة" : chats.length ? `✅ التنبيهات شغّالة · ${chats.length} محادثة مربوطة` : "⚠️ مفعّلة لكن مفيش محادثة مربوطة";
+  if (st) st.className = notifyState.config.enabled && chats.length ? "status ok" : "status warn";
+}
+function renderNotify() {
+  const el = $("notifyCard");
+  if (!el) return;
+  if (role !== "admin" || !notifyState) { el.style.display = "none"; return; }
+  el.style.display = "";
+  const c = notifyState.config, last = notifyState.last;
+  el.innerHTML = `<div class="row" style="align-items:center">
+      <div><h2 style="margin:0">🔔 تنبيهات الموظفين على تيليجرام</h2><div id="nf-status" class="status" style="margin-top:6px"></div></div>
+      <div style="display:flex;align-items:center;gap:14px">
+        <label class="sw" title="تفعيل / إيقاف"><input type="checkbox" id="nf-enabled" ${c.enabled ? "checked" : ""} onchange="notifyToggleEnabled(this.checked)"><span class="slider"></span></label>
+        <button class="ghost" id="notifyArrow" onclick="toggleNotifyPanel()" title="إظهار / إخفاء الإعدادات" style="padding:2px 10px;font-size:18px;line-height:1.4">${notifyOpen ? "▴" : "▾"}</button>
+      </div></div>
+    <div id="notifyDetails" style="display:${notifyOpen ? "block" : "none"}">
+      <p class="muted" style="margin:8px 0">بيوصلك رسالة على تيليجرام أول ما يجي سؤال جديد أو متابعة جديدة، حتى لو اللوحة مقفولة. مفيش رقم هاتف ولا ID عميل بيتبعت في التنبيه. للرد من الجروب: اعمل Reply على تنبيه السؤال نفسه واكتب الإجابة كنص؛ البوت هيوصلها للعميل ويسجل الرد.</p>
+      <h3 style="margin:12px 0 4px;font-size:14px">المحادثات المربوطة (حتى ${notifyState.maxChats})</h3>
+      <div id="nf-chats"></div>
+      <div style="margin-top:8px"><button class="ghost" id="nf-link" onclick="notifyLink()">🔗 ربط محادثة جديدة</button></div>
+      <div id="nf-codebox"></div>
+      <h3 style="margin:16px 0 6px;font-size:14px">الإعدادات</h3>
+      <div style="display:flex;flex-wrap:wrap;gap:14px;margin-bottom:8px">
+        <label><input type="checkbox" id="nf-q" ${c.onQuestion ? "checked" : ""}> سؤال جديد</label>
+        <label><input type="checkbox" id="nf-f" ${c.onFollowup ? "checked" : ""}> متابعة جديدة</label>
+        <label><input type="checkbox" id="nf-name" ${c.showName ? "checked" : ""}> إظهار اسم العميل</label>
+      </div>
+      <label class="muted">عدد حروف نص السؤال في التنبيه (من 0 إلى 1000، و0 = من غير نص)</label>
+      <input id="nf-chars" type="number" min="0" max="1000" step="1" value="${c.previewChars}">
+      <label class="muted" style="margin-top:8px;display:block">أقصى عدد تنبيهات في الدقيقة (من 1 إلى 30). لو زادت بتتجمّع في رسالة واحدة «وصلت أسئلة كتير»، والأسئلة نفسها بتتسجل كلها.</label>
+      <input id="nf-rate" type="number" min="1" max="30" step="1" value="${c.maxPerMinute}">
+      <label class="muted" style="margin-top:8px;display:block">رابط اللوحة (لزرار «فتح اللوحة» في التنبيه)</label>
+      <input id="nf-url" dir="ltr" placeholder="https://..." value="${esc(c.panelUrl || location.origin)}">
+      <div id="nf-err" class="status" style="color:var(--bad);margin-top:6px"></div>
+      <div class="row" style="margin-top:10px;justify-content:flex-start">
+        <button class="ok" onclick="notifySave()">💾 حفظ الإعدادات</button>
+        <button class="ghost" onclick="notifyTest()">📨 إرسال تنبيه تجريبي</button>
+      </div>
+      <div class="muted" id="nf-last" style="margin-top:8px">${last ? `آخر إرسال: ${esc(fmtTime(last.t))} · ${last.failed ? `فشل لـ ${last.failed} محادثة` : "نجح"}` : "لسه مفيش إرسال."}</div>
+    </div>`;
+  renderNotifyChats();
+  if (notifyCode && notifyCode.until > Date.now()) showNotifyCode();
+}
+async function notifyToggleEnabled(on) {
+  const box = $("nf-enabled");
+  try {
+    const r = await api("notifySet", { config: { enabled: on } });
+    notifyState.config = r.config; renderNotifyChats();
+    toast(on ? "تم تشغيل التنبيهات" : "تم إيقاف التنبيهات", "ok");
+    if (on && !(notifyState.chats || []).length) toast("اربط محادثة عشان توصلك التنبيهات", "bad");
+  } catch (e) { toast(e.message, "bad"); if (box) box.checked = !on; }
+}
+async function notifySave() {
+  const err = $("nf-err"), chars = $("nf-chars").value.trim(), rate = $("nf-rate").value.trim(), url = $("nf-url").value.trim();
+  err.textContent = "";
+  if (!/^\d+$/.test(chars) || +chars > 1000) { err.textContent = "عدد الحروف رقم صحيح من 0 إلى 1000"; return; }
+  if (!/^\d+$/.test(rate) || +rate < 1 || +rate > 30) { err.textContent = "أقصى عدد في الدقيقة رقم صحيح من 1 إلى 30"; return; }
+  if (url && !/^https:\/\/\S+$/.test(url)) { err.textContent = "رابط اللوحة لازم يبدأ بـ https://"; return; }
+  try {
+    const r = await api("notifySet", { config: { onQuestion: $("nf-q").checked, onFollowup: $("nf-f").checked, showName: $("nf-name").checked, previewChars: +chars, maxPerMinute: +rate, panelUrl: url } });
+    notifyState.config = r.config; renderNotifyChats();
+    toast("تم حفظ إعدادات التنبيهات", "ok");
+  } catch (e) { err.textContent = e.message; }
+}
+function showNotifyCode() {
+  const box = $("nf-codebox");
+  if (!box || !notifyCode) return;
+  const cmd = `/notify ${notifyCode.code}`;
+  box.innerHTML = `<div class="card" style="padding:12px;margin-top:8px;border:1px dashed var(--brand)">
+      <div class="muted">الكود (صالح 10 دقايق، ويتستخدم مرة واحدة):</div>
+      <div dir="ltr" style="font-size:26px;letter-spacing:5px;font-weight:700;margin:4px 0">${esc(notifyCode.code)}</div>
+      <div>ابعت للبوت${notifyCode.bot ? ` <b dir="ltr">@${esc(notifyCode.bot)}</b>` : ""} الرسالة دي:</div>
+      <div style="margin:6px 0"><code dir="ltr" style="font-size:16px">${esc(cmd)}</code> <button class="ghost" onclick='notifyCopy(${JSON.stringify(cmd)})'>نسخ</button></div>
+      <ul class="muted" style="margin:6px 18px;padding:0;line-height:1.8">
+        <li><b>التنبيه يوصلك خاص:</b> ابعت الأمر في محادثتك الخاصة مع البوت.</li>
+        <li><b>التنبيه يوصل لجروب:</b> ضيف البوت للجروب وابعت الأمر هناك.</li></ul>
+      <div class="muted" id="nf-wait">⏳ مستني الربط… (بيتحدّث لوحده)</div></div>`;
+}
+async function notifyLink() {
+  try {
+    const r = await api("notifyLinkCode");
+    notifyCode = { code: r.code, bot: r.bot, until: Date.now() + r.expiresIn * 1000, before: (notifyState.chats || []).length };
+    showNotifyCode();
+    clearInterval(notifyPollTimer);
+    notifyPollTimer = setInterval(async () => {
+      if (!notifyCode || notifyCode.until < Date.now() || !$("nf-codebox")) { clearInterval(notifyPollTimer); if ($("nf-codebox")) $("nf-codebox").innerHTML = ""; notifyCode = null; return; }
+      if (document.hidden || Date.now() - lastDashboardActivity >= DASHBOARD_IDLE_MS) return;
+      try {
+        const st = await api("notifyGet");
+        notifyState.chats = st.chats; renderNotifyChats();
+        if (st.chats.length > notifyCode.before) { clearInterval(notifyPollTimer); notifyCode = null; $("nf-codebox").innerHTML = ""; toast("تم ربط المحادثة ✅", "ok"); }
+      } catch {}
+    }, NOTIFY_POLL_MS);
+  } catch (e) { toast(e.message, "bad"); }
+}
+function notifyCopy(text) {
+  const done = () => toast("تم النسخ", "ok");
+  if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(text).then(done, () => toast(text, "ok"));
+  else toast(text, "ok");
+}
+async function notifyUnlink(chatId) {
+  if (!(await confirmBox("فصل المحادثة دي من التنبيهات؟ مش هتوصلها تنبيهات تاني.", "فصل", true))) return;
+  try { await api("notifyUnlink", { ref: String(chatId) }); const st = await api("notifyGet"); notifyState.chats = st.chats; renderNotifyChats(); toast("تم الفصل", "ok"); }
+  catch (e) { toast(e.message, "bad"); }
+}
+async function notifyTest() {
+  try {
+    const r = await api("notifyTest");
+    toast(r.failed ? `اتبعت لـ ${r.sent} وفشل لـ ${r.failed} (التفاصيل تحت المحادثة)` : `اتبعت التنبيه التجريبي لـ ${r.sent} محادثة ✅`, r.failed ? "bad" : "ok");
+    const st = await api("notifyGet"); notifyState = st; renderNotifyChats();
+    const l = $("nf-last"); if (l && st.last) l.textContent = `آخر إرسال: ${fmtTime(st.last.t)} · ${st.last.failed ? `فشل لـ ${st.last.failed} محادثة` : "نجح"}`;
+  } catch (e) { toast(e.message, "bad"); }
+}
+
+function moreRow(total, shown, action) {
+  if (total <= shown) return total > PAGE_SIZE ? `<tr><td colspan="9" class="muted">تم عرض كل النتائج (${total})</td></tr>` : "";
+  return `<tr><td colspan="9" style="text-align:center"><button class="ghost" onclick="${action}">⬇️ عرض ${Math.min(PAGE_SIZE, total - shown)} إضافية (معروض ${shown} من ${total})</button></td></tr>`;
+}
+function renderQuestions() {
+  updateBell(); updateQuestionCards();   // الجرس والكروت يتحدّثوا فوراً بعد أي رد/إغلاق/حذف (من غير تبديل التاب)
+  const t = $("qTable");
+  const q = ($("qSearch").value || "").trim();
+  const counts = {};
+  questionsCache.filter((x) => x.status !== "answered").forEach((x) => { const k = normQ(x.q); counts[k] = (counts[k] || 0) + 1; });
+  const byFilter = (x) => !qFilter || (qFilter === "open" ? (x.status || "open") === "open" : x.status === qFilter);
+  const rows = questionsCache.filter((x) => !["answered", "archived"].includes(x.status) && byFilter(x) && (!q || x.q.includes(q) || (x.followups || []).some((f) => (f.text || "").includes(q)) || custSearchMatch(x, q)));
+  filterChip("qFilterChip", qFilter === "open" ? "فلتر: الأسئلة الجديدة" : qFilter === "followup_pending" ? "فلتر: تحتاج متابعة" : "", "clearQFilter");
+  if (!rows.length) { t.innerHTML = '<tr><td class="muted">' + (qFilter || q ? "مفيش أسئلة مطابقة للفلتر الحالي" : "مفيش أسئلة بعد") + '</td></tr>'; return; }
+  const qSig = JSON.stringify([q, qFilter]);
+  if (qSig !== lastQSig) { qLimit = PAGE_SIZE; lastQSig = qSig; }   // فلتر/بحث جديد: نبدأ من أول صفحة
+  const qShown = rows.slice(0, qLimit);
+  t.innerHTML = `<tr><th>العميل</th><th>السؤال</th><th>عدد مرات</th><th>الوقت</th><th>الإجابة</th><th></th></tr>` + qShown.map((x) => `
+    <tr>
+      <td style="min-width:190px">${custInfoHtml(x)}</td>
+      ${qCellHtml(x)}
+      <td>${counts[normQ(x.q)] > 1 ? `<span class="chip">${counts[normQ(x.q)]}</span>` : "1"}</td>
+      <td>${fmtTime(pendingFollowup(x)?.t || x.t)}</td>
+      <td style="min-width:280px">
+        ${["answered", "awaiting_followup"].includes(x.status) ? `<div class="status ok">✅ تم الرد — في انتظار متابعة العميل<br><span class="muted">المتابعات: ${x.followups?.length || 0}/${fuLimitQ(x)}<br>${x.followupUntil ? `المهلة حتى: ${fmtTime(x.followupUntil)}` : ""}</span><br><button class="ghost" style="margin-top:6px" onclick='toggleAnswer(${JSON.stringify(x.id)})'>📝 عرض/تعديل الإجابة</button><button class="ghost" style="margin-top:6px" onclick='sendAnswer(${JSON.stringify(x.id)}, ${JSON.stringify(x.answer || "")})'>↩️ إعادة إرسال</button><div id="answer-edit-${esc(x.id)}" class="hidden" style="margin-top:8px"><textarea id="answer-${esc(x.id)}" rows="4">${esc(x.answer || "")}</textarea><div class="answer-toolbar"><label class="file-label" onclick="event.stopPropagation()"><span id="answer-img-name-${esc(x.id)}">📎 إرفاق صورة</span><input type="file" id="answer-img-${esc(x.id)}" accept="image/*" onchange="this.closest('.file-label').querySelector('span').textContent=this.files[0]?.name||'📎 إرفاق صورة'"></label><button class="ok" onclick='sendAnswer(${JSON.stringify(x.id)})'>📤 إرسال</button></div></div></div>` : x.status === "followup_pending" ? `<div class="status warn">📩 متابعة جديدة بانتظار الرد<br><button class="ghost" style="margin-top:6px" onclick='showFollowup(${JSON.stringify(x.id)})'>📩 عرض متابعة العميل</button><textarea id="answer-${esc(x.id)}" rows="3" placeholder="اكتب الرد على المتابعة..."></textarea><div class="answer-toolbar"><label class="file-label" onclick="event.stopPropagation()"><span id="answer-img-name-${esc(x.id)}">📎 إرفاق صورة</span><input type="file" id="answer-img-${esc(x.id)}" accept="image/*" onchange="this.closest('.file-label').querySelector('span').textContent=this.files[0]?.name||'📎 إرفاق صورة'"></label><button class="ok" onclick='sendAnswer(${JSON.stringify(x.id)})'>📤 إرسال</button></div>` : x.chatId ? `<textarea id="answer-${esc(x.id)}" rows="3" placeholder="اكتب الإجابة للعميل..."></textarea><div class="answer-toolbar"><label class="file-label" onclick="event.stopPropagation()"><span id="answer-img-name-${esc(x.id)}">📎 إرفاق صورة</span><input type="file" id="answer-img-${esc(x.id)}" accept="image/*" onchange="this.closest('.file-label').querySelector('span').textContent=this.files[0]?.name||'📎 إرفاق صورة'"></label><button class="ok" onclick='sendAnswer(${JSON.stringify(x.id)})'>📤 إرسال</button></div>` : `<span class="muted">سؤال قديم بدون بيانات العميل</span>`}
+      </td>
+      <td>${x.chatId ? `<button class="ghost" style="margin-bottom:6px" onclick='showCustomerHistory(${JSON.stringify(x.chatId)})'>👤 سجل العميل (${custIdx[String(x.chatId)]?.n || 0})</button>` : ""}${x.chatId && role === "admin" ? limitBtn(x.chatId) : ""}<button class="ghost" style="margin-bottom:6px" onclick='closeQuestionFromPanel(${JSON.stringify(x.id)})'>🔒 إغلاق</button>${x.chatId && role === "admin" ? `<button class="danger" style="margin-bottom:6px" onclick='openBanDialog(${JSON.stringify(x.chatId)}, ${JSON.stringify(x.customerName || "")})'>🚫 حظر</button>` : ""}<button class="danger" onclick="deleteQ(${JSON.stringify(x.raw).replace(/"/g, "&quot;")})">🗑</button></td>
+    </tr>`).join("") + moreRow(rows.length, qShown.length, "qLimit += PAGE_SIZE; renderQuestions()");
+}
+
+async function uploadImageToImgBB(file) {
+  const b64 = await new Promise((res, rej) => {
+    const r = new FileReader();
+    r.onload = () => res(r.result.split(",")[1]);
+    r.onerror = rej;
+    r.readAsDataURL(file);
+  });
+  const result = await api("uploadImage", { image: b64 });
+  if (!result.url) throw new Error(result.error || "فشل رفع الصورة");
+  return result.url;
+}
+
+async function sendAnswer(id, savedAnswer = "") {
+  const input = document.getElementById(`answer-${id}`);
+  const answer = (savedAnswer || input?.value || "").trim();
+  if (!answer) return toast("اكتب الإجابة أولاً", "bad");
+  const imgInput = document.getElementById(`answer-img-${id}`);
+  const file = imgInput?.files?.[0];
+  let imageUrl = null;
+  if (file) {
+    try { imageUrl = await uploadImageToImgBB(file); }
+    catch (e) { return toast(e.message, "bad"); }
+  }
+  const ok = await confirmBox("هتتبعت الإجابة للعميل صاحب السؤال فقط. متأكد؟", "تم الإرسال", false);
+  if (!ok) return;
+  try {
+    const result = await api("answerQuestion", { ref: id, answer, imageUrl });
+    const item = questionsCache.find((x) => x.id === id);
+    if (item) { item.answer = answer; item.status = result.question?.status || "awaiting_followup"; item.answeredAt = result.question?.answeredAt || Date.now(); item.followupUntil = result.question?.followupUntil || item.followupUntil; item.answerHistory = result.question?.answerHistory || item.answerHistory; item.raw = result.question?.raw || item.raw; }
+    renderQuestions();
+    renderArchive();
+    toast("تم إرسال الإجابة للعميل", "ok");
+  } catch (e) { toast(e.message, "bad"); }
+}
+
+function toggleAnswer(id) {
+  const el = document.getElementById(`answer-edit-${id}`);
+  if (el) el.classList.toggle("hidden");
+}
+
+function showFollowup(id) {
+  const item = questionsCache.find((x) => x.id === id);
+  if (!item?.followups?.length) return;
+  modal(`<h2 style="margin:0 0 10px">📩 متابعة العميل</h2>
+    <div class="card" style="padding:10px;margin-bottom:8px">${custInfoHtml(item)}</div>
+    <div style="max-height:62vh;overflow:auto">${threadHtml(item, { highlightLast: true })}</div>
+    <div class="row" style="margin-top:12px"><button class="ghost" data-r="0">إغلاق</button></div>`);
+  const hl = [...document.querySelectorAll(".tl-hl")].at(-1);   // ننزل عند آخر متابعة جديدة
+  if (hl && hl.scrollIntoView) hl.scrollIntoView({ block: "nearest" });
+}
+
+function archiveRows() {
+  const q = ($("aSearch")?.value || "").trim().toLowerCase();
+  const from = $("aFrom")?.value || "";
+  const to = $("aTo")?.value || "";
+  return questionsCache.filter((x) => {
+    if (!["answered", "archived"].includes(x.status)) return false;
+    if (aFilter && aFilter.startsWith("closed")) {
+      if (x.status !== "archived") return false;
+      const kind = aFilter.split(":")[1];
+      if (kind && closeKind(x) !== kind) return false;
+    }
+    const day = cairoDate(x.t);
+    const text = `${x.q || ""} ${x.answer || ""}`.toLowerCase();
+    return (!q || text.includes(q) || custSearchMatch(x, q)) && (!from || day >= from) && (!to || day <= to);
+  });
+}
+
+function shortText(text, max = 90) {
+  const s = String(text || "").replace(/\s+/g, " ").trim();
+  return s.length > max ? s.slice(0, max) + "…" : s;
+}
+
+// ---------- المحادثة بترتيب زمني: سؤال ← إجابته ← متابعة ← إجابتها ... ----------
+function threadEvents(item) {
+  const ev = [{ kind: "q", t: item.t || 0, text: item.q, attachments: item.attachments || [], ord: 0 }];
+  answerEntries(item).forEach((a, i) => ev.push({ kind: "a", t: a.t || 0, text: a.text || "", idx: i, ord: 1 }));
+  (item.followups || []).forEach((f, i) => ev.push({ kind: "f", t: f.t || 0, text: f.text || "", attachments: f.attachments || [], n: i + 1, ord: 2 }));
+  const sorted = ev.map((e, seq) => ({ ...e, seq })).sort((a, b) => a.t - b.t || a.ord - b.ord || a.seq - b.seq);
+  // كل رد بياخد اسم اللي بيرد عليه (السؤال أو المتابعة رقم كذا) بدل رقم عام، علشان ما يحصلش لخبطة
+  let target = { label: "السؤال", count: 0 };
+  for (const e of sorted) {
+    if (e.kind === "q") target = { label: "السؤال", count: 0 };
+    else if (e.kind === "f") target = { label: `المتابعة ${e.n}`, count: 0 };
+    else {
+      target.count++;
+      e.label = `الرد على ${target.label}` + (target.count > 1 ? ` · رد إضافي${target.count > 2 ? " " + (target.count - 1) : ""}` : "");
+    }
+  }
+  return sorted;
+}
+function answerLabel(item, idx) {
+  return threadEvents(item).find((e) => e.kind === "a" && e.idx === idx)?.label || `الإجابة ${idx + 1}`;
+}
+function imgsHtml(list, w = 180, h = 140) {
+  return (list || []).map((a) => `<br><a href="${esc(a.url)}" target="_blank"><img src="${esc(a.url)}" style="max-width:${w}px;max-height:${h}px;border-radius:8px;margin-top:6px;display:block"></a>`).join("");
+}
+function threadHtml(item, { highlightLast = false } = {}) {
+  const evs = threadEvents(item);
+  const lastF = highlightLast ? evs.filter((e) => e.kind === "f").at(-1) : null;
+  return evs.map((e) => {
+    const time = `<br><span class="muted">${esc(fmtTime(e.t))}</span>`;
+    if (e.kind === "q") return `<div class="card tl tl-q" style="margin:7px 0;padding:9px;border-right:3px solid #98a2b3"><b>❓ السؤال</b><br><span style="white-space:pre-wrap">${esc(e.text || "")}</span>${imgsHtml(e.attachments)}${time}</div>`;
+    if (e.kind === "a") return `<div class="card tl tl-a" style="margin:7px 0;padding:9px;background:var(--soft)"><b>✅ ${esc(e.label)}</b><br><span style="white-space:pre-wrap">${esc(e.text)}</span>${time}<br><button class="ghost" style="margin-top:4px" onclick='editAnswerHistory(${JSON.stringify(item.id)}, ${e.idx})'>📝 تعديل</button></div>`;
+    const hl = lastF && e === lastF;
+    return `<div class="card tl tl-f${hl ? " tl-hl" : ""}" style="margin:7px 0;padding:9px;border-right:3px solid var(--accent)${hl ? ";background:#fffaeb" : ""}"><b>📩 متابعة ${e.n}</b>${hl ? ' <span class="status warn">جديدة بانتظار الرد</span>' : ""}<br><span style="white-space:pre-wrap">${esc(e.text)}</span>${imgsHtml(e.attachments)}${time}</div>`;
+  }).join("");
+}
+// متابعة جديدة بانتظار الرد: الإجابة الأصلية اتبعتت خلاص، فالصف في الجدول يعرض المتابعة نفسها
+function pendingFollowup(x) { return x.status === "followup_pending" && (x.followups || []).length ? x.followups.at(-1) : null; }
+function qCellHtml(x) {
+  const f = pendingFollowup(x);
+  if (f) {
+    return `<td style="white-space:pre-wrap"><span class="status warn" style="display:inline-block;margin-bottom:4px">📩 متابعة رقم ${x.followups.length}</span><br>${esc(f.text || "")}${imgsHtml(f.attachments, 120, 90)}<div class="muted" style="font-size:12px;margin-top:6px;cursor:pointer;white-space:normal" title="اضغط لعرض المحادثة كاملة" onclick='showConversation(${JSON.stringify(x.id)})'>↪ على سؤال: ${esc(shortText(x.q, 45))}</div></td>`;
+  }
+  return `<td style="white-space:pre-wrap">${esc(x.q)}${imgsHtml(x.attachments, 120, 90)}</td>`;
+}
+
+function showConversation(id) {
+  const item = questionsCache.find((x) => x.id === id);
+  if (!item) return;
+  modal(`<h2 style="margin:0 0 8px">🗂️ محادثة السؤال</h2><div class="card" style="padding:10px;margin-bottom:8px">${custInfoHtml(item)}</div><div style="max-height:62vh;overflow:auto;margin-top:8px">${threadHtml(item)}</div><div class="row" style="margin-top:10px"><button class="ghost" data-r="0">إغلاق</button></div>`);
+}
+
+function renderArchive() {
+  updateBell(); updateQuestionCards();
+  const t = $("aTable");
+  if (!t) return;
+  const rows = archiveRows();
+  const aChip = { closed: "فلتر: الأسئلة المغلقة فقط", "closed:timeout": "فلتر: أُغلقت بانتهاء المهلة", "closed:manual": "فلتر: أُغلقت يدوياً", "closed:max_followups": "فلتر: وصلت للحد الأقصى من المتابعات" };
+  filterChip("aFilterChip", aChip[aFilter] || "", "clearAFilter");
+  if (!rows.length) { t.innerHTML = '<tr><td class="muted">مفيش أسئلة مؤرشفة حسب الفلتر الحالي</td></tr>'; return; }
+  const aSig = JSON.stringify([$("aSearch")?.value, $("aFrom")?.value, $("aTo")?.value, aFilter]);
+  if (aSig !== lastASig) { aLimit = PAGE_SIZE; lastASig = aSig; }
+  const aShown = rows.slice(0, aLimit);
+  t.innerHTML = `<tr><th>العميل</th><th>السؤال</th><th>ملخص الإجابة</th><th>وقت السؤال</th><th>وقت الرد</th><th></th></tr>` + aShown.map((x) => `
+    <tr>
+      <td style="min-width:190px">${custInfoHtml(x)}${x.chatId ? `<button class="ghost" style="margin-top:6px" onclick='showCustomerHistory(${JSON.stringify(x.chatId)})'>👤 سجل العميل (${custIdx[String(x.chatId)]?.n || 0})</button>` : ""}${x.chatId && role === "admin" ? `<br>${limitBtn(x.chatId)}` : ""}</td>
+      <td style="white-space:pre-wrap">${esc(x.q)}${(x.attachments||[]).map(a => `<br><a href="${esc(a.url)}" target="_blank"><img src="${esc(a.url)}" style="max-width:120px;max-height:90px;border-radius:8px;margin-top:4px;display:block"></a>`).join("")}</td>
+      <td><span class="muted">${answerEntries(x).length} إجابات</span><br><span>${esc(shortText(x.answer || answerEntries(x).at(-1)?.text || ""))}</span><br><button class="ghost" style="margin-top:4px" onclick='showConversation(${JSON.stringify(x.id)})'>🗂️ عرض المحادثة</button></td>
+      <td>${fmtTime(x.t)}</td>
+      <td>${x.answeredAt ? fmtTime(x.answeredAt) : "—"}</td>
+      <td><div class="q-actions"><button class="ghost" onclick='editArchiveAnswer(${JSON.stringify(x.id)})'>📝 تعديل/إرسال</button><button class="danger" onclick="deleteQ(${JSON.stringify(x.raw).replace(/"/g, "&quot;")})">🗑 حذف</button></div></td>
+    </tr>`).join("") + moreRow(rows.length, aShown.length, "aLimit += PAGE_SIZE; renderArchive()");
+}
+
+function clearArchiveFilters() {
+  aFilter = null;
+  $("aSearch").value = "";
+  $("aFrom").value = "";
+  $("aTo").value = "";
+  renderArchive();
+}
+
+function editArchiveAnswer(id) {
+  const item = questionsCache.find((x) => x.id === id);
+  if (!item) return;
+  modal(`<h2 style="margin:0 0 10px">📝 تعديل إجابة مؤرشفة</h2>
+    <textarea id="archive-answer-${esc(id)}" rows="6">${esc(item.answer || "")}</textarea>
+    <div class="row" style="margin-top:12px">
+      <button class="ok" onclick='sendArchiveAnswer(${JSON.stringify(id)})'>📤 إرسال التعديل</button>
+      <button class="ghost" data-r="0">إغلاق</button>
+    </div>`);
+}
+
+function sendArchiveAnswer(id) {
+  const input = document.getElementById(`archive-answer-${id}`);
+  const answer = input?.value.trim() || "";
+  if (!answer) return toast("اكتب الإجابة أولاً", "bad");
+  sendAnswer(id, answer);
+}
+
+async function editAnswerHistory(id, answerIndex) {
+  const item = questionsCache.find((x) => x.id === id);
+  const entry = item && answerEntries(item)[answerIndex];
+  if (!item || !entry) return;
+  const result = await new Promise((resolve) => {
+    const bg = document.createElement("div");
+    bg.className = "modal-bg";
+    bg.innerHTML = `<div class="modal"><h2 style="margin:0 0 10px">📝 تعديل: ${esc(answerLabel(item, answerIndex))}</h2>
+      <p class="muted">سيتم إرسال النسخة المعدلة للعميل، وتظل بقية الإجابات كما هي.</p>
+      <textarea id="history-answer-edit" rows="7">${esc(entry.text || "")}</textarea>
+      <div class="row" style="margin-top:12px"><button class="ok" data-r="1">📤 تعديل وإعادة الإرسال</button><button class="ghost" data-r="0">إلغاء</button></div></div>`;
+    bg.addEventListener("click", (e) => {
+      if (e.target.dataset.r !== undefined) {
+        const value = bg.querySelector("#history-answer-edit")?.value || "";
+        bg.remove(); resolve({ ok: e.target.dataset.r === "1", answer: value });
+      } else if (e.target === bg) { bg.remove(); resolve({ ok: false, answer: "" }); }
+    });
+    document.body.appendChild(bg);
+  });
+  if (!result.ok || !result.answer.trim()) return;
+  try {
+    const response = await api("editAnswer", { ref: id, answerIndex, answer: result.answer.trim() });
+    const updated = response.question;
+    const local = questionsCache.find((x) => x.id === id);
+    if (local) Object.assign(local, updated);
+    renderQuestions(); renderArchive();
+    toast("تم تعديل الإجابة وإعادة إرسالها", "ok");
+  } catch (e) { toast(e.message, "bad"); }
+}
+
+async function resetQuestionLimit() {
+  const chatId = prompt("اكتب معرف العميل (chatId):");
+  if (!chatId || !/^\d+$/.test(chatId.trim())) return toast("معرف غير صحيح", "bad");
+  try {
+    await api("resetQuestionLimit", { ref: chatId.trim() });
+    toast("تم فتح حد الأسئلة للعميل", "ok");
+  } catch (e) { toast(e.message, "bad"); }
+}
+
+async function deleteQ(raw) {
+  const ok = await confirmBox("تمسح السؤال ده؟", "حذف", true);
+  if (!ok) return;
+  try {
+    await api("delq", { ref: raw });
+    questionsCache = questionsCache.filter((x) => x.raw !== raw);
+    renderQuestions();
+    renderArchive();
+    toast("اتمسح", "ok");
+  } catch (e) { toast(e.message, "bad"); }
+}
+
+async function closeQuestionFromPanel(id) {
+  const ok = await confirmBox("هيتم إغلاق السؤال وإرسال تنبيه للعميل ونقله للأرشيف. متأكد؟", "إغلاق السؤال", true);
+  if (!ok) return;
+  try {
+    const result = await api("closeQuestion", { ref: id });
+    const item = questionsCache.find((x) => x.id === id);
+    if (item) Object.assign(item, result.question);
+    renderQuestions(); renderArchive();
+    toast("تم إغلاق السؤال ونقله للأرشيف", "ok");
+  } catch (e) { toast(e.message, "bad"); }
+}
+
+function exportQuestions() {
+  csvDownload(`الأسئلة_الحالية_${today()}.csv`, [["العميل", "وقت السؤال", "السؤال", "الحالة", "الإجابة", "وقت الرد", "عدد أسئلة العميل"],
+    ...questionsCache.filter((x) => x.status !== "answered").map((x) => [x.customerName || "غير معروف", fmtTime(x.t), x.q, x.status || "open", x.answer || "", x.answeredAt ? fmtTime(x.answeredAt) : "", x.chatId ? customerQuestions(x.chatId).length : ""]) ]);
+}
+
+function exportArchive() {
+  const rows = archiveRows();
+  csvDownload(`أرشيف_الأسئلة_${today()}.csv`, [["العميل", "وقت السؤال", "السؤال", "الإجابة", "وقت الرد", "الحالة", "معرّف العميل", "عدد أسئلة العميل"],
+    ...rows.map((x) => [x.customerName || "غير معروف", fmtTime(x.t), x.q, x.answer || "", x.answeredAt ? fmtTime(x.answeredAt) : "", x.status || "answered", x.chatId || "", x.chatId ? customerQuestions(x.chatId).length : ""]) ]);
+}
+
+function fmtTime(ms) {
+  return new Date(ms).toLocaleString("ar-EG", { timeZone: "Africa/Cairo" });
+}
+
+function hoursTable(hours) {
+  const hrs = Array.from({ length: 24 }, (_, h) => ({ h, n: Number(hours[h] || 0) }));
+  const maxHr = Math.max(1, ...hrs.map((r) => r.n));
+  return hrs.map((r) => `<tr><td>${r.h}:00</td><td>${r.n}</td><td style="width:45%"><div class="bar"><span style="width:${(r.n / maxHr) * 100}%"></span></div></td></tr>`).join("");
+}
+function dailyChart(days) {
+  const maxD = Math.max(1, ...days.map((d) => d.presses));
+  return days.map((d) => `<div class="col"><div class="num">${d.presses}</div><div class="bar-v" style="height:${Math.max(3, (d.presses / maxD) * 100)}%"></div><div class="lbl">${d.date.slice(5)}</div></div>`).join("");
+}
+function usageRows(obj) {
+  const entries = Object.entries(obj || {}).filter(([k]) => !!k);
+  const max = Math.max(1, ...entries.map(([, v]) => Number(v)));
+  if (!entries.length) return '<tr><td colspan="3" class="muted">لا يوجد نشاط في هذا النطاق</td></tr>';
+  return entries.sort((a, b) => b[1] - a[1]).map(([k, v]) => `<tr><td>${esc(k.split("|")[1] || k)}</td><td>${v}</td><td style="width:35%"><div class="bar"><span style="width:${(v / max) * 100}%"></span></div></td></tr>`).join("");
+}
+async function loadDailyForDate(date) {
+  try {
+    const chart = date ? dailyChart([{ date, presses: (await api("statsDay", { ref: date })).presses }]) : dailyChart(lastStats?.daily || []);
+    $("dailyChart").innerHTML = chart;
+    $("dailyMode").textContent = date ? `بيانات يوم ${date} فقط` : "الضغطات خلال آخر 7 أيام";
+  } catch (e) { toast(e.message, "bad"); }
+}
+async function loadButtonsForDate(date) {
+  try {
+    const obj = date ? (await api("statsDay", { ref: date })).byPath : lastStats?.pressByPath7d || {};
+    const used = labelUsage(obj);
+    $("buttonsTable").innerHTML = `<tr><th>الزرار</th><th>الضغطات</th><th></th></tr>${usageRows(used)}`;
+    $("buttonsMode").textContent = date ? `بيانات يوم ${date} فقط` : "أكتر الزراير استخدامًا خلال آخر 7 أيام";
+  } catch (e) { toast(e.message, "bad"); }
+}
+async function loadHoursForDate(date) {
+  try {
+    const view = date ? await api("statsDay", { ref: date }) : { hours: lastStats?.hours || {} };
+    lastHoursView = view.hours || {}; lastHoursDate = date || "";
+    $("hoursTable").innerHTML = `<tr><th>الساعة</th><th>الضغطات</th><th></th></tr>${hoursTable(lastHoursView)}`;
+    $("hoursMode").textContent = date ? `بيانات يوم ${date} فقط` : "الإجمالي التاريخي لكل البيانات المتاحة";
+  } catch (e) { toast(e.message, "bad"); }
+}
+
+// ---------- كروت الإحصائيات (عملاء + أسئلة) ----------
+function calcQStats(list) {   // نفس منطق السيرفر (computeQuestionStats): كل سؤال أصلي مرة، والمتابعات مش بتتعد
+  const seen = new Set(), c = { total: 0, open: 0, fu: 0, wait: 0, closed: 0, legacy: 0, ct: 0, cx: 0, cm: 0 };
+  for (const x of list) {
+    const k = x.id || x.raw; if (k) { if (seen.has(k)) continue; seen.add(k); }
+    c.total++;
+    const st = x.status || "open";
+    if (st === "open") c.open++; else if (st === "followup_pending") c.fu++; else if (st === "awaiting_followup") c.wait++;
+    else if (st === "archived") { c.closed++; const k = closeKind(x); if (k === "timeout") c.ct++; else if (k === "max_followups") c.cx++; else c.cm++; }
+    else if (st === "answered") c.legacy++;
+  }
+  return c;
+}
+// سبب إغلاق السؤال: انتهت المهلة / وصل للحد / يدوي (والقديم اللي مالوش سبب مسجّل بيتحسب يدوي)
+function closeKind(x) { return x.closeReason === "timeout" ? "timeout" : x.closeReason === "max_followups" ? "max_followups" : "manual"; }
+// نسب مجموعها 100% بالظبط (أكبر باقي)، وصفر لو مفيش أسئلة مغلقة
+function percents(nums) {
+  const total = nums.reduce((a, b) => a + b, 0);
+  if (!total) return nums.map(() => 0);
+  const raw = nums.map((n) => (n / total) * 100), out = raw.map(Math.floor);
+  let left = 100 - out.reduce((a, b) => a + b, 0);
+  raw.map((v, i) => [v - Math.floor(v), i]).sort((a, b) => b[0] - a[0]).forEach(([, i]) => { if (left > 0) { out[i]++; left--; } });
+  return out;
+}
+function closedCardHtml(timeout, manual, maxf) {
+  const total = timeout + manual + maxf;
+  const p = percents([timeout, manual, maxf]);
+  const row = (kind, label, n, pc, color) => `<div class="click" style="cursor:pointer" onclick="goArchive('closed:${kind}')" title="عرض هذه الأسئلة في الأرشيف">
+      <div style="display:flex;justify-content:space-between;margin-bottom:4px;font-size:13px"><span>${label}</span><span><b>${n}</b> · ${pc}%</span></div>
+      <div style="height:8px;background:var(--soft);border-radius:4px"><div style="width:${pc}%;height:8px;background:${color};border-radius:4px"></div></div></div>`;
+  return `<div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:12px">
+      <h3 style="margin:0;font-size:15px">🔒 الأسئلة المغلقة: ليه اتقفلت؟</h3>
+      <span class="muted">الإجمالي <b id="qs-closed">${total}</b></span></div>
+    <div style="display:grid;gap:12px">
+      ${row("timeout", "⏱ انتهت المهلة (العميل ما كمّلش خلال 24 ساعة)", timeout, p[0], "#7F77DD")}
+      ${row("manual", "🖐 أُغلقت يدوياً من الإدارة", manual, p[1], "#1D9E75")}
+      ${row("max_followups", "🔁 وصلت للحد الأقصى من المتابعات", maxf, p[2], "#D85A30")}
+    </div>
+    <p class="muted" style="margin:10px 0 0;font-size:12px">«يدوياً» بتشمل الأسئلة القديمة اللي ما اتسجلش لها سبب. اضغط أي سطر لعرض أسئلته في الأرشيف.</p>`;
+}
+function updateQuestionCards() {   // بيحدّث الأرقام فوراً بعد أي تغيير في حالة سؤال (من غير إعادة رسم الصفحة)
+  if (!$("qs-total")) return;
+  const c = calcQStats(questionsCache);
+  const set = (id, v) => { const el = $(id); if (el) el.textContent = v; };
+  set("qs-total", c.total); set("qs-open", c.open); set("qs-fu", c.fu); set("qs-archive", c.closed + c.legacy);
+  const cc = $("qs-closedcard"); if (cc) cc.innerHTML = closedCardHtml(c.ct, c.cm, c.cx);
+  set("qs-wait", `منهم ${c.wait} في انتظار رد العميل`);
+}
+
+// ---------- كروت العملاء + فلتر اليوم ----------
+function custKpisHtml(st) {
+  const p = st.phones || { shared: 0, notShared: 0, rate: 0 };
+  return `
+      <div class="kpi click" onclick="openCustomersList('shared')"><div class="n">${p.shared}</div><div class="l">📱 أرقام الهواتف المشتركة</div><div class="sub">اضغط لعرض العملاء</div></div>
+      <div class="kpi click" onclick="openCustomersList('notshared')"><div class="n">${p.notShared}</div><div class="l">🚫 لم يشاركوا أرقامهم</div><div class="sub">يشمل من لم يظهر له الطلب بعد، وليس رفضاً بالضرورة</div></div>
+      <div class="kpi"><div class="n">${p.rate}%</div><div class="l">📊 نسبة مشاركة الأرقام</div><div class="sub">المشاركون ÷ إجمالي المشتركين (تقريبي)</div></div>
+      <div class="kpi"><div class="n">${(st.registry || {}).count || 0}</div><div class="l">📇 المشتركين المسجلين ب id</div></div>`;
+}
+async function loadCustomersDay(date) {
+  try {
+    if (!date) { $("custKpis").innerHTML = custKpisHtml(lastStats || {}); $("custMode").textContent = "الإجمالي"; if ($("custDate")) $("custDate").value = ""; return; }
+    const d = await api("customersDay", { ref: date });
+    $("custKpis").innerHTML = `
+      <div class="kpi"><div class="n">${d.shared}</div><div class="l">📱 شاركوا أرقامهم في اليوم ده</div></div>
+      <div class="kpi"><div class="n">${d.registered}</div><div class="l">📇 تسجّلوا بالـ id في اليوم ده</div></div>`;
+    $("custMode").textContent = `بيانات يوم ${date} فقط`;
+  } catch (e) { toast(e.message, "bad"); }
+}
+// ---------- الكروت العلوية + فلتر اليوم ----------
+let mainKpisDefault = "";
+async function loadOverviewDay(date) {
+  try {
+    if (!date) { $("mainKpis").innerHTML = mainKpisDefault; $("overviewMode").textContent = "الإجمالي / اليوم"; if ($("overviewDate")) $("overviewDate").value = ""; return; }
+    const d = await api("overviewDay", { ref: date });
+    const pk = d.peak ? `${String(d.peak.hour).padStart(2, "0")}:00 (${d.peak.count} ضغطة)` : "لا توجد بيانات";
+    $("mainKpis").innerHTML = `
+      <div class="kpi"><div class="n">${d.newSubs}</div><div class="l">🆕 مشتركون جدد في اليوم ده</div></div>
+      <div class="kpi"><div class="n">${d.active}</div><div class="l">🟢 نشطون في اليوم ده</div></div>
+      <div class="kpi"><div class="n">${d.presses}</div><div class="l">👆 ضغطات اليوم ده</div></div>
+      <div class="kpi"><div class="n" style="font-size:21px">${pk}</div><div class="l">🕒 وقت الذروة في اليوم ده</div></div>`;
+    $("overviewMode").textContent = `بيانات يوم ${date} فقط`;
+  } catch (e) { toast(e.message, "bad"); }
+}
+function statsSectionsHtml(st) {
+  const p = st.phones || { shared: 0, notShared: 0, rate: 0, enabled: false };
+  const q = st.questionStats || { total: 0, open: 0, followupPending: 0, awaitingCustomer: 0, closed: 0, archiveTotal: 0 };
+  const on = st.intake ? st.intake.enabled : true;
+  return `
+    <div class="row" style="margin-top:6px"><h2 class="sect" style="margin:0">👥 إحصائيات العملاء</h2>
+      <div class="row" style="gap:6px"><label class="muted">يوم محدد: <input id="custDate" type="date" onchange="loadCustomersDay(this.value)" style="width:auto"></label><button class="ghost" onclick="loadCustomersDay('')">الإجمالي</button></div></div>
+    <p id="custMode" class="muted" style="margin:4px 0 8px">الإجمالي</p>
+    ${p.enabled ? "" : `<div class="card" style="border-color:#fedf89">⚠️ مشاركة الأرقام غير مفعلة: ضيف المتغير <b dir="ltr">PHONE_ENC_KEY</b> في Vercel ثم Redeploy (الخطوات في التقرير).</div>`}
+    <div class="kpis" id="custKpis">${custKpisHtml(st)}</div>
+    <h2 class="sect">📋 إحصائيات الأسئلة</h2>
+    <div class="${on ? "status ok" : "status warn"}" style="margin-bottom:10px">${on ? "✅ استقبال الأسئلة الجديدة مفعل" : "⏸️ استقبال الأسئلة الجديدة متوقف مؤقتاً"}</div>
+    <div class="kpis">
+      <div class="kpi click" onclick="openAllQuestions()"><div class="n" id="qs-total">${q.total}</div><div class="l">📚 إجمالي الأسئلة</div><div class="sub" id="qs-wait">منهم ${q.awaitingCustomer} في انتظار رد العميل</div></div>
+      <div class="kpi click" onclick="goQuestions('open')"><div class="n" id="qs-open">${q.open}</div><div class="l">🆕 جديدة لم يتم الرد عليها</div></div>
+      <div class="kpi click" onclick="goQuestions('followup_pending')"><div class="n" id="qs-fu">${q.followupPending}</div><div class="l">🔔 تحتاج إلى متابعة</div><div class="sub">متابعة من العميل بانتظار رد الإدارة</div></div>
+      <div class="kpi click" onclick="goArchive(null)"><div class="n" id="qs-archive">${q.archiveTotal}</div><div class="l">🗄️ إجمالي الأرشيف</div><div class="sub">المغلقة + القديمة المُجاب عنها</div></div>
+    </div>
+    <div class="card" id="qs-closedcard" style="margin-top:12px">${closedCardHtml(q.closedTimeout || 0, q.closedManual || 0, q.closedMaxFollowups || 0)}</div>
+    `;
+}
+
+// ---------- نوافذ مساعدة + قوائم العملاء ----------
+function mkModal(html, width = 700) {
+  const bg = document.createElement("div");
+  bg.className = "modal-bg";
+  bg.innerHTML = `<div class="modal" style="width:min(${width}px,100%)">${html}</div>`;
+  document.body.appendChild(bg);
+  const close = () => bg.remove();
+  bg.addEventListener("click", (e) => { if (e.target === bg) close(); });
+  bg.querySelectorAll("[data-close]").forEach((b) => (b.onclick = close));
+  return { bg, close };
+}
+
+async function openCustomersList(filter) {
+  const title = filter === "shared" ? "📱 العملاء الذين شاركوا أرقامهم" : "🚫 العملاء الذين لا يوجد لهم رقم محفوظ";
+  const { bg } = mkModal(`<h2 style="margin:0 0 10px">${title}</h2>
+    <input id="cl-q" placeholder="🔍 ابحث بالاسم أو Username أو Telegram ID${role === "admin" ? " أو رقم الهاتف" : ""}">
+    <div id="cl-body" class="muted" style="margin-top:10px">جاري التحميل...</div>
+    <div id="cl-pager" style="display:flex;gap:8px;align-items:center;justify-content:center;flex-wrap:wrap;margin-top:10px"></div>
+    ${filter === "notshared" ? '<p class="muted" style="font-size:12px">القائمة تعرض العملاء المعروفين للنظام (من تفاعل بعد التحديث أو أرسل سؤالاً). باقي المشتركين القدامى بيظهروا تدريجياً عند أول تفاعل لهم، فممكن يكون عدد القائمة أقل من رقم الكارت.</p>' : ""}
+    <div class="row" style="margin-top:10px"><button class="ghost" data-close>إغلاق</button></div>`, 760);
+  const input = bg.querySelector("#cl-q"), body = bg.querySelector("#cl-body"), pager = bg.querySelector("#cl-pager");
+  let seq = 0, page = 1;
+  const load = async () => {
+    const mine = ++seq;
+    try {
+      const r = await api("customers", { filter, q: input.value.trim(), page });
+      if (mine !== seq) return;
+      page = r.page;
+      body.className = "";
+      body.innerHTML = r.customers.length ? `<div class="muted" style="margin-bottom:6px">عدد النتائج: ${r.total}</div><div style="overflow:auto"><table><tr><th>العميل</th><th>Telegram ID</th><th>حالة المشاركة</th><th>أول تفاعل مسجل</th><th></th></tr>${r.customers.map((c) => `<tr>
+          <td><b>${esc(c.name || "غير معروف")}</b>${c.username ? `<br><span class="muted" dir="ltr">@${esc(c.username)}</span>` : ""}</td>
+          <td dir="ltr">${esc(c.chatId)}</td><td>${PHONE_STATE_LABEL[c.phoneState] || ""}</td>
+          <td>${c.firstSeen ? esc(fmtTime(c.firstSeen)) : "—"}</td>
+          <td><button class="ghost" onclick='openCustomerDetail(${JSON.stringify(c.chatId)})'>تفاصيل</button></td></tr>`).join("")}</table></div>` : '<div class="muted">لا يوجد عملاء مطابقون</div>';
+      pager.innerHTML = r.pages > 1 ? `<button class="ghost" data-p="1" ${page === 1 ? "disabled" : ""}>⏮ الأولى</button>
+        <button class="ghost" data-p="${page - 1}" ${page === 1 ? "disabled" : ""}>السابق ▶</button>
+        <span class="muted">صفحة <b>${page}</b> من ${r.pages}</span>
+        <button class="ghost" data-p="${page + 1}" ${page === r.pages ? "disabled" : ""}>◀ التالي</button>
+        <button class="ghost" data-p="${r.pages}" ${page === r.pages ? "disabled" : ""}>الأخيرة ⏭</button>` : "";
+      pager.querySelectorAll("button[data-p]").forEach((b) => (b.onclick = () => { page = +b.dataset.p; load(); body.scrollIntoView({ block: "nearest" }); }));
+    } catch (e) { if (mine === seq) body.textContent = e.message; }
+  };
+  let timer; input.addEventListener("input", () => { clearTimeout(timer); page = 1; timer = setTimeout(load, 300); });
+  load();
+}
+
+async function openCustomerDetail(chatId) {
+  let r;
+  try { r = await api("customerDetail", { ref: String(chatId) }); } catch (e) { return toast(e.message, "bad"); }
+  const c = r.customer;
+  let phone;
+  if (c.phone) phone = `<span dir="ltr"><b>${esc(c.phone)}</b></span>`;
+  else if (c.hasPhone && r.canSeePhone) phone = "⚠️ تعذّر فك تشفير الرقم (راجع PHONE_ENC_KEY)";
+  else if (c.hasPhone) phone = "🔒 غير مصرح لك بعرض الرقم";
+  else phone = "لم تتم مشاركة رقم الهاتف";
+  const hasQ = customerQuestions(c.chatId).length > 0;
+  mkModal(`<h2 style="margin:0 0 10px">👤 تفاصيل العميل</h2>
+    <div class="card" style="padding:12px;line-height:2">
+      <b>${esc(c.name || "غير معروف")}</b>${c.username ? ` <span class="muted" dir="ltr">@${esc(c.username)}</span>` : ""}<br>
+      🆔 Telegram User ID: <span dir="ltr">${esc(c.chatId)}</span><br>
+      📱 رقم الهاتف: ${phone}<br>
+      📌 حالة المشاركة: ${PHONE_STATE_LABEL[c.phoneState] || ""}<br>
+      🗓 أول تفاعل مسجل: ${c.firstSeen ? esc(fmtTime(c.firstSeen)) : "—"}<br>
+      💬 عدد الأسئلة المسجلة: ${c.questionsCount}<br>
+      ➕ إضافي دائم (قديم): ${c.extraFollowups}
+    </div>
+    <div class="row" style="margin-top:12px;justify-content:flex-start">
+      ${hasQ ? `<button class="ghost" onclick='showCustomerHistory(${JSON.stringify(c.chatId)})'>📋 سجل الأسئلة</button>` : ""}
+      ${role === "admin" ? limitBtn(c.chatId) : ""}
+      <button class="ghost" data-close>إغلاق</button>
+    </div>`, 520);
+}
+
+async function openAllQuestions() {
+  if (!questionsCache.length) { try { await loadQuestions(); } catch {} }
+  const label = { open: "🆕 جديد", followup_pending: "🔔 متابعة", awaiting_followup: "⏳ بانتظار العميل", archived: "🔒 مغلق", answered: "🗄️ مؤرشف" };
+  const { bg } = mkModal(`<h2 style="margin:0 0 10px">📚 كل الأسئلة</h2>
+    <input id="aq-q" placeholder="🔍 ابحث في السؤال أو بيانات العميل...">
+    <div id="aq-body" style="margin-top:10px"></div>
+    <div class="row" style="margin-top:10px"><button class="ghost" data-close>إغلاق</button></div>`, 900);
+  const input = bg.querySelector("#aq-q"), body = bg.querySelector("#aq-body");
+  const draw = () => {
+    const q = input.value.trim();
+    const rows = questionsCache.filter((x) => !q || x.q.includes(q) || custSearchMatch(x, q));
+    body.innerHTML = rows.length ? `<div class="muted" style="margin-bottom:6px">عدد الأسئلة: ${rows.length}</div><div style="overflow:auto;max-height:60vh"><table><tr><th>العميل</th><th>السؤال</th><th>الحالة</th><th>الوقت</th><th></th></tr>${rows.map((x) => `<tr>
+        <td style="min-width:170px">${custInfoHtml(x)}</td><td style="white-space:pre-wrap">${esc(shortText(x.q, 140))}</td>
+        <td>${label[x.status || "open"] || esc(x.status)}</td><td>${esc(fmtTime(x.t))}</td>
+        <td><button class="ghost" onclick='showConversation(${JSON.stringify(x.id)})'>🗂️ المحادثة</button></td></tr>`).join("")}</table></div>` : '<div class="muted">مفيش أسئلة</div>';
+  };
+  input.addEventListener("input", draw); draw();
+}
+
+async function loadStats() {
+  const box = $("stats-body");
+  box.innerHTML = '<div class="muted">جاري التحميل...</div>';
+  try {
+    const st = await api("stats");
+    lastStats = st;
+    if (!st.configured) {
+      box.innerHTML = '<div class="card" style="border-color:#fedf89">⚠️ الإحصائيات مش متوصلة. اربط Upstash في Vercel وعمل Redeploy.</div>';
+      return;
+    }
+
+    const delta = st.pressesYesterday
+      ? Math.round(((st.pressesToday - st.pressesYesterday) / st.pressesYesterday) * 100)
+      : null;
+    const deltaHtml = delta === null
+      ? '<div class="delta muted">مفيش بيانات امبارح للمقارنة</div>'
+      : `<div class="delta ${delta >= 0 ? "up" : "down"}">${delta >= 0 ? "▲" : "▼"} ${Math.abs(delta)}% عن امبارح</div>`;
+
+    // أوقات الذروة: إجمالي تاريخي افتراضي، أو يوم مستقل يختاره المستخدم
+    lastHoursView = st.hours || {}; lastHoursDate = "";
+    const hoursRows = hoursTable(lastHoursView);
+    const peak7 = st.peakLast7 ? `${String(st.peakLast7.hour).padStart(2, "0")}:00 (${st.peakLast7.count} ضغطة)` : "لا توجد بيانات كافية";
+
+    const maxD = Math.max(1, ...st.daily.map((d) => d.presses));
+    const chart = st.daily.map((d) => `
+      <div class="col">
+        <div class="num">${d.presses}</div>
+        <div class="bar-v" style="height:${Math.max(3, (d.presses / maxD) * 100)}%"></div>
+        <div class="lbl">${d.date.slice(5)}</div>
+      </div>`).join("");
+
+    const barRows = (obj, mapFn) => {
+      const entries = Object.entries(obj).sort((a, b) => b[1] - a[1]);
+      const max = Math.max(1, ...entries.map((e) => e[1]));
+      if (!entries.length) return '<tr><td colspan="3" class="muted">لا يوجد نشاط بعد</td></tr>';
+      return entries.map(([k, v]) => `
+        <tr><td>${esc(mapFn ? mapFn(k) : k)}</td><td>${v}</td>
+        <td style="width:35%"><div class="bar"><span style="width:${(v / max) * 100}%"></span></div></td></tr>`).join("");
+    };
+
+    const used = labelUsage(st.pressByPath7d);
+
+    box.innerHTML = `
+      <div class="row"><h2 class="sect" style="margin:0">📊 الإحصائيات العامة</h2>
+        <div class="row" style="gap:6px"><label class="muted">يوم محدد: <input id="overviewDate" type="date" onchange="loadOverviewDay(this.value)" style="width:auto"></label><button class="ghost" onclick="loadOverviewDay('')">الإجمالي / اليوم</button></div></div>
+      <p id="overviewMode" class="muted" style="margin:4px 0 8px">الإجمالي / اليوم</p>
+      <div class="kpis" id="mainKpis">
+        <div class="kpi"><div class="n">${st.subscribersTotal}</div><div class="l">👥 إجمالي المشتركين (تقريبي)</div></div>
+        <div class="kpi"><div class="n">${st.newSubscribersToday ?? 0}</div><div class="l">🆕 مشتركون جدد اليوم</div></div>
+        <div class="kpi"><div class="n">${st.activeToday ?? 0}</div><div class="l">🟢 نشطون اليوم</div></div>
+        <div class="kpi"><div class="n">${st.pressesToday}</div><div class="l">👆 ضغطات النهاردة</div>${deltaHtml}</div>
+        <div class="kpi"><div class="n" style="font-size:21px">${peak7}</div><div class="l">🕒 وقت الذروة (آخر 7 أيام)</div></div>
+      </div>
+      ${statsSectionsHtml(st)}
+
+      <div class="card"><div class="row"><h2 style="margin:0">الضغطات آخر 7 أيام</h2><div class="row" style="gap:6px"><label class="muted">يوم محدد: <input id="dailyDate" type="date" onchange="loadDailyForDate(this.value)" style="width:auto"></label><button class="ghost" onclick="loadDailyForDate(\"\")">آخر 7 أيام</button><button class="ghost" onclick="exportDaily()">📥 تصدير</button></div></div>
+        <p id="dailyMode" class="muted">الضغطات خلال آخر 7 أيام</p><div id="dailyChart" class="chart">${chart}</div></div>
+
+      <div class="card" id="buttonsCard"><div class="row"><h2 style="margin:0">أكتر الزراير استخداماً (7 أيام)</h2><div class="row" style="gap:6px"><label class="muted">يوم محدد: <input id="buttonsDate" type="date" onchange="loadButtonsForDate(this.value)" style="width:auto"></label><button class="ghost" onclick="loadButtonsForDate(\"\")">آخر 7 أيام</button><button class="ghost" onclick="exportButtons()">📥 تصدير</button></div></div>
+        <p id="buttonsMode" class="muted">أكتر الزراير استخدامًا خلال آخر 7 أيام</p><table id="buttonsTable"><tr><th>الزرار</th><th>الضغطات</th><th></th></tr>${usageRows(used)}</table></div>
+
+      <div class="card" id="hoursCard"><div class="row"><h2 style="margin:0">🕒 أوقات الذروة</h2><div class="row" style="gap:6px"><label class="muted">يوم محدد: <input id="peakDate" type="date" onchange="loadHoursForDate(this.value)" style="width:auto"></label><button class="ghost" onclick="loadHoursForDate("")">الإجمالي</button><button class="ghost" onclick="exportHours()">📥 Excel</button></div></div>
+        <p id="hoursMode" class="muted">الإجمالي التاريخي لكل البيانات المتاحة</p>
+        <table id="hoursTable"><tr><th>الساعة</th><th>الضغطات</th><th></th></tr>${hoursRows}</table>
+        <p class="muted" style="margin:10px 0 0">الساعات بتوقيت القاهرة، والبيانات محفوظة تاريخيًا.</p></div>
+`;
+    mainKpisDefault = $("mainKpis").innerHTML;
+    makeStatsCollapsible();
+  } catch (e) {
+    box.innerHTML = `<div class="card" style="color:var(--bad)">${esc(e.message)}</div>`;
+  }
+}
+
+// أقسام الإحصائيات اللي ممكن تتطوي (سهم على الشمال). مطوية افتراضياً، واختيارك بيتفتكر طول ما التاب مفتوح
+function collState() { try { return JSON.parse(sessionStorage.getItem("stats-coll") || "{}"); } catch { return {}; } }
+function makeCollapsible(cardId, key) {
+  const card = $(cardId);
+  if (!card || card.querySelector(":scope > .coll-body")) return;
+  const header = card.querySelector(":scope > .row");
+  if (!header) return;
+  const body = document.createElement("div");
+  body.className = "coll-body";
+  [...card.children].filter((c) => c !== header).forEach((c) => body.appendChild(c));
+  card.appendChild(body);
+  const controls = header.querySelector(":scope > .row") || header;
+  const arrow = document.createElement("button");
+  arrow.type = "button"; arrow.className = "ghost coll-arrow"; arrow.title = "إظهار / إخفاء";
+  arrow.style.cssText = "padding:2px 10px;font-size:18px;line-height:1.4";
+  const apply = (open) => {
+    body.style.display = open ? "block" : "none";
+    arrow.textContent = open ? "▴" : "▾";
+    arrow.setAttribute("aria-expanded", String(open));
+    [...controls.children].forEach((c) => { if (c !== arrow) c.style.display = open ? "" : "none"; });   // أدوات القسم تظهر وهو مفتوح بس
+  };
+  arrow.onclick = () => {
+    const open = body.style.display === "none";
+    apply(open);
+    const st = collState(); st[key] = open;
+    try { sessionStorage.setItem("stats-coll", JSON.stringify(st)); } catch {}
+  };
+  controls.appendChild(arrow);
+  apply(!!collState()[key]);
+}
+function makeStatsCollapsible() {
+  makeCollapsible("buttonsCard", "buttons");
+  makeCollapsible("hoursCard", "hours");
+}
+
+// ---------- سجل النسخ ----------
+async function loadHistory() {
+  const t = $("historyTable");
+  t.innerHTML = '<tr><td class="muted">جاري التحميل...</td></tr>';
+  try {
+    const { commits } = await api("history");
+    if (!commits.length) { t.innerHTML = '<tr><td class="muted">مفيش نسخ بعد</td></tr>'; return; }
+    t.innerHTML = `<tr><th>التاريخ</th><th>الوصف</th><th></th></tr>` + commits.map((c) => `
+      <tr>
+        <td>${new Date(c.date).toLocaleString("ar-EG", { timeZone: "Africa/Cairo" })}</td>
+        <td>${esc(c.message.split("\n")[0])}</td>
+        <td><button class="ghost" onclick="restoreVersion('${c.sha}')">📥 استرجاع</button></td>
+      </tr>`).join("");
+  } catch (e) {
+    t.innerHTML = `<tr><td style="color:var(--bad)">${esc(e.message)}</td></tr>`;
+  }
+}
+
+// ---------- نظام الحظر ----------
+let bansCache = [];
+
+async function loadBans() {
+  const t = $("bansTable");
+  t.innerHTML = '<tr><td class="muted">جاري التحميل...</td></tr>';
+  try {
+    bansCache = (await api("getBans")).bans;
+    renderBans();
+  } catch (e) { t.innerHTML = `<tr><td style="color:var(--bad)">${esc(e.message)}</td></tr>`; }
+}
+
+function clearBansFilters() {
+  $("bansSearch").value = "";
+  $("bansFrom").value = "";
+  $("bansTo").value = "";
+  renderBans();
+}
+
+function renderBans() {
+  const t = $("bansTable");
+  const q = ($("bansSearch")?.value || "").trim().toLowerCase();
+  const from = $("bansFrom")?.value || "";
+  const to = $("bansTo")?.value || "";
+  const rows = bansCache.filter((b) => {
+    const name = (customerQuestions(b.chatId).find((x) => x.customerName)?.customerName || "").toLowerCase();
+    const matchQ = !q || b.chatId.includes(q) || name.includes(q) || (b.reason || "").toLowerCase().includes(q) || (b.bannedBy || "").toLowerCase().includes(q);
+    const day = cairoDate(Number(b.bannedAt));
+    return matchQ && (!from || day >= from) && (!to || day <= to);
+  });
+  if (!rows.length) { t.innerHTML = `<tr><td class="muted" colspan="5">${bansCache.length ? "لا توجد نتائج للفلتر الحالي" : "مفيش عملاء محظورون"}</td></tr>`; return; }
+  t.innerHTML = `<tr><th>اسم العميل</th><th>معرف العميل</th><th>السبب</th><th>تاريخ الحظر</th><th>بواسطة</th><th></th></tr>` +
+    rows.map((b) => {
+      const history = customerQuestions(b.chatId);
+      const name = history.find((x) => x.customerName)?.customerName || "—";
+      return `<tr>
+        <td>${esc(name)}</td>
+        <td class="muted">${esc(b.chatId)}</td>
+        <td>${esc(b.reason || "—")}</td>
+        <td>${fmtTime(Number(b.bannedAt))}</td>
+        <td>${esc(b.bannedBy || "—")}</td>
+        <td><div style="display:flex;gap:6px;align-items:center">
+          ${history.length ? `<button class="ghost" onclick='showCustomerHistory(${JSON.stringify(b.chatId)})'>👤 السجل (${history.length})</button>` : ""}
+          <button class="ghost" onclick='unbanUser(${JSON.stringify(b.chatId)})'>✅ رفع الحظر</button>
+        </div></td>
+      </tr>`;
+    }).join("");
+}
+
+async function unbanUser(chatId) {
+  const ok = await confirmBox(`رفع الحظر عن العميل ${chatId}؟`, "رفع الحظر", false);
+  if (!ok) return;
+  try {
+    await api("unbanUser", { ref: chatId });
+    bansCache = bansCache.filter((b) => b.chatId !== chatId);
+    renderBans();
+    toast("تم رفع الحظر", "ok");
+  } catch (e) { toast(e.message, "bad"); }
+}
+
+const BAN_REASONS = [
+  "إساءة أو ألفاظ غير لائقة",
+  "إرسال محتوى مخالف",
+  "تكرار الأسئلة بشكل مزعج",
+  "محاولة اختراق أو استغلال",
+  "سبب آخر",
+];
+
+function openBanDialog(chatId, customerName) {
+  const bg = document.createElement("div");
+  bg.className = "modal-bg";
+  const box = document.createElement("div");
+  box.className = "modal";
+  box.innerHTML = `
+    <h2 style="margin:0 0 10px">🚫 حظر العميل</h2>
+    <p class="muted">العميل: <b>${esc(customerName || chatId)}</b><br>المعرّف: ${esc(chatId)}</p>
+    <label class="f">سبب الحظر</label>
+    <select id="banReasonSel" style="width:100%;padding:9px;border-radius:10px;border:1px solid var(--line);background:var(--card);color:var(--text);font:inherit">
+      ${BAN_REASONS.map((r) => `<option>${esc(r)}</option>`).join("")}
+    </select>
+    <label class="f">سبب مخصص (اختياري، يستبدل الاختيار أعلاه)</label>
+    <input id="banReasonCustom" placeholder="اكتب السبب هنا..." maxlength="300">
+    <div class="row" style="margin-top:14px">
+      <button class="danger" id="banConfirmBtn">🚫 تأكيد الحظر</button>
+      <button class="ghost" id="banCancelBtn">إلغاء</button>
+    </div>`;
+  bg.appendChild(box);
+  document.body.appendChild(bg);
+  box.querySelector("#banCancelBtn").onclick = () => bg.remove();
+  bg.addEventListener("click", (e) => { if (e.target === bg) bg.remove(); });
+  box.querySelector("#banConfirmBtn").onclick = async () => {
+    const custom = box.querySelector("#banReasonCustom").value.trim();
+    const selected = box.querySelector("#banReasonSel").value;
+    const reason = custom || selected;
+    try {
+      await api("banUser", { ref: chatId, message: reason });
+      bg.remove();
+      toast(`تم حظر العميل: ${reason}`, "ok");
+      if (!$("tab-bans").classList.contains("hidden")) loadBans();
+    } catch (e) { toast(e.message, "bad"); }
+  };
+}
+
+async function restoreVersion(sha) {
+  const ok = await confirmBox("هيتحط المحتوى ده في المحرر. لازم تضغط حفظ عشان يتثبت على البوت. تكمل؟", "استرجاع", false);
+  if (!ok) return;
+  try {
+    data = (await api("version", { ref: sha })).content;
+    markDirty();
+    showTab("menu");
+    draw();
+    toast("اتحمّلت النسخة في المحرر، اضغط حفظ لتثبيتها", "ok");
+  } catch (e) { toast(e.message, "bad"); }
+}
+autoLogin();
+</script>
+</body>
+</html>

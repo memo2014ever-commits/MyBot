@@ -1,0 +1,651 @@
+// بوت تلجرام: قايمة + رجوع + روابط + زرار سؤال + بحث بالكلمات + تحويل الطبي للخط الساخن
+import { Bot, InlineKeyboard, Keyboard, webhookCallback } from "grammy";
+import {
+  trackVisitor, trackActive, trackPress, pushQuestion, questionAllowed, questionsLeft, MAX_QUESTIONS_COUNT, getIntake, DEFAULT_INTAKE_MESSAGE, questionForReply, addFollowup, getQuestions, answerQuestion, getExtraFollowups, limitForItem, maybeExpireQuestions, setPending, takePending, isBanned, setPendingImage, takePendingImage,
+} from "./stats.js";
+import { trackSubscriber } from "./registry.js";
+import { notifyStaffSafe, getNotifyConfig, consumeLinkCode, unlinkNotifyChat, isNotifyChat, MAX_NOTIFY_CHATS } from "./notify.js";
+import { phoneFeatureEnabled, claimPhonePrompt, phonePromptDue, hasPhone, savePhone, skipPhone, upsertInfo, normalizePhone } from "./customers.js";
+
+const CONTENT_URL = process.env.CONTENT_URL;
+const IMGBB_API_KEY = process.env.IMGBB_API_KEY;
+const bot = new Bot(process.env.BOT_TOKEN);
+
+// ---- فيديو من القناة البرايفت: الزرار اللي فيه videoMsgId بيبعت نسخة من رسالة القناة للعميل (من غير "forwarded from") ----
+// VIDEO_CHANNEL_ID = معرّف القناة (-100xxxxxxxxxx) ، VIDEO_PROTECT=1 (اختياري) يمنع العميل من تحويل/حفظ الفيديو
+const VIDEO_CHANNEL_ID = process.env.VIDEO_CHANNEL_ID;
+async function sendNodeVideo(ctx, node) {
+  const id = Number(node?.videoMsgId);
+  if (!VIDEO_CHANNEL_ID || !Number.isInteger(id) || id <= 0 || !ctx.chat?.id) return;
+  try {
+    await ctx.api.copyMessage(ctx.chat.id, VIDEO_CHANNEL_ID, id, { protect_content: process.env.VIDEO_PROTECT === "1" });
+  } catch (e) { console.error("[video] copyMessage failed:", e?.description || e?.message); }   // فشل الفيديو ما يوقفش الرد
+}
+
+// تسجيل كل عميل (ID بس) في قاعدة المشتركين أول ما يتفاعل. أي فشل هنا ما يوقفش البوت.
+bot.use(async (ctx, next) => {
+  try { await trackSubscriber(ctx); }
+  catch (e) { console.error("[subscriber] Firestore write failed:", String(e?.message || e).slice(0, 200)); }
+  await next();
+});
+
+async function uploadToImgBB(fileId) {
+  try {
+    if (!IMGBB_API_KEY) { console.error("[ImgBB] IMGBB_API_KEY missing"); return null; }
+    const fileInfo = await bot.api.getFile(fileId);
+    if (!fileInfo?.file_path) { console.error("[ImgBB] no file_path"); return null; }
+    const fileUrl = `https://api.telegram.org/file/bot${process.env.BOT_TOKEN}/${fileInfo.file_path}`;
+    const fileRes = await fetch(fileUrl);
+    if (!fileRes.ok) { console.error("[ImgBB] fetch file failed", fileRes.status); return null; }
+    const buffer = await fileRes.arrayBuffer();
+    const base64 = Buffer.from(buffer).toString("base64");
+    const form = new URLSearchParams();
+    form.append("key", IMGBB_API_KEY);
+    form.append("image", base64);
+    const res = await fetch("https://api.imgbb.com/1/upload", { method: "POST", body: form });
+    const j = await res.json();
+    if (!j?.data?.url) { console.error("[ImgBB] upload failed", JSON.stringify(j)); return null; }
+    return j.data.url;
+  } catch (e) { console.error("[ImgBB] exception", e?.message); return null; }
+}
+
+async function extractAttachments(msg) {
+  if (!IMGBB_API_KEY) return [];
+  const attachments = [];
+  if (msg.photo) {
+    const photo = msg.photo[msg.photo.length - 1];
+    const url = await uploadToImgBB(photo.file_id);
+    if (url) attachments.push({ type: "image", url });
+  } else if (msg.document && msg.document.mime_type?.startsWith("image/")) {
+    const url = await uploadToImgBB(msg.document.file_id);
+    if (url) attachments.push({ type: "image", url, name: msg.document.file_name });
+  }
+  return attachments;
+}
+
+const DEFAULT_CLOSED_AUTO = "🔒 تم إغلاق سؤالك تلقائيًا لعدم وجود متابعة خلال 24 ساعة.\n\nإذا كان لديك استفسار جديد، استخدم زر «ابعت سؤالك» 👇";
+async function notifyExpired(items, message = DEFAULT_CLOSED_AUTO) {
+  await Promise.all((items || []).map((x) => bot.api.sendMessage(x.chatId, message).catch(() => {})));
+}
+
+// الرسايل الافتراضية (تتغير من ⚙️ رسايل النظام في اللوحة)
+const DEFAULT_PROMPT = "اكتب سؤالك هنا 👇";
+const DEFAULT_THANKS = "استلمنا سؤالك، شكراً لتواصلك 🌷";
+const DEFAULT_FALLBACK = "اختار من الأزرار تحت 👇";
+const DEFAULT_DYM = "تقصد؟ اختار من دول 👇";
+const DEFAULT_MEDICAL = "السؤال ده محتاج متابعة طبية، ومش هقدر أرد عليه هنا.\nللمساعدة اتصل بالخط الساخن 19806 📞";
+const DEFAULT_LIMIT = "استنفدت عدد الأسئلة المسموحة ({max}) خلال 24 ساعة 🙏\nتقدر تسأل تاني بعد 24 ساعة من أول سؤال.";
+const DEFAULT_LEFT = "(باقي لك {left} أسئلة خلال 24 ساعة)";
+const DEFAULT_FOLLOWUP_RECEIVED = "تم استلام المتابعة على نفس السؤال ✅\nسيتم الرد عليك هنا.";
+const DEFAULT_FOLLOWUP_LIMIT = "تم الوصول للحد الأقصى للمتابعات على هذا السؤال. لو عندك استفسار جديد، استخدم زر «ابعت سؤالك» 👇";
+const DEFAULT_QUESTION_SAVE_ERROR = "حصلت مشكلة مؤقتة في حفظ سؤالك، وما اتسجلش عندنا. جرّب تبعته تاني بعد شوية من فضلك 🙏";
+const DEFAULT_INQUIRY = "للاستعلام عن موعدك أو حجزك، ادخل على بوت الحجز مباشرة 👇";
+const DEFAULT_INQUIRY_WORDS = ["استعلم", "استعلام", "موعدي", "حجزي", "متابعه", "حاله الطلب", "رقم الطلب"];
+const DEFAULT_MED_WORDS = ["علاج", "دوا", "دواء", "ادويه", "اعراض", "الم", "وجع", "مرض", "جرعه", "تشخيص", "حساسيه", "حراره"];
+
+// ---- مشاركة رقم الهاتف (اختيارية بالكامل، والنصوص قابلة للتعديل من رسايل النظام) ----
+const DEFAULT_PHONE_PROMPT = "عشان نقدر نخدمك أحسن ونتواصل معاك لو احتجنا، تقدر تشارك رقم هاتفك مع الإدارة 📱\nالمشاركة اختيارية تماماً، وعدم المشاركة مش بيمنعك من استخدام البوت.";
+const DEFAULT_PHONE_SHARE_BTN = "📱 مشاركة رقم الهاتف";
+const DEFAULT_PHONE_SKIP_BTN = "⏭️ الاستمرار بدون مشاركة";
+const DEFAULT_PHONE_MENU_BTN = "📱 مشاركة رقم الهاتف (اختياري)";
+const DEFAULT_PHONE_THANKS = "تم حفظ رقمك بشكل آمن ✅ شكراً لك 🌷";
+const DEFAULT_PHONE_SKIPPED = "تمام 👍 تقدر تكمل استخدام البوت عادي. ولو حبيت تشارك رقمك بعدين هتلاقي زرار «📱 مشاركة رقم الهاتف» في القايمة الرئيسية.";
+const DEFAULT_PHONE_MISMATCH = "الرقم ده مش مسجل على حسابك في تيليجرام، فمقدرش أحفظه 🙏\nلو حابب تشارك رقمك اضغط الزرار تحت 👇";
+const DEFAULT_PHONE_ALREADY = "رقمك محفوظ عندنا بالفعل ✅";
+const DEFAULT_PHONE_ERROR = "حصلت مشكلة وأنا بحفظ الرقم، جرّب تاني بعد شوية 🙏";
+
+const fill = (t, vars) => Object.entries(vars).reduce((a, [k, v]) => a.split("{" + k + "}").join(String(v)), t);
+
+// تنظيف النص للمقارنة: بدون تشكيل، والحروف المتشابهة واحدة
+function norm(t = "") {
+  return String(t).toLowerCase()
+    .replace(/[\u064B-\u0652\u0640]/g, "")
+    .replace(/[أإآ]/g, "ا").replace(/ى/g, "ي").replace(/ة/g, "ه")
+    .replace(/[،؛؟,.!:()\[\]"«»-]/g, " ")
+    .replace(/[^\u0600-\u06FFa-z0-9\s]/g, " ")
+    .replace(/\s+/g, " ").trim();
+}
+const padded = (t) => " " + norm(t) + " ";
+
+function hasInquiry(text, custom) {
+  const list = Array.isArray(custom) && custom.length ? custom : DEFAULT_INQUIRY_WORDS;
+  const t = padded(text);
+  return list.some((w) => { const k = norm(w); return k && t.includes(" " + k + " "); });
+}
+
+function hasMedical(text, custom) {
+  const list = Array.isArray(custom) && custom.length ? custom : DEFAULT_MED_WORDS;
+  const t = padded(text);
+  return list.some((w) => { const k = norm(w); return k && t.includes(" " + k + " "); });
+}
+
+// يمشي على كل الشجرة ويرجع المسار مع كل عنصر (نفس طريقة المسارات في الزراير)
+function walk(node, path = "", out = []) {
+  out.push({ path, node });
+  (node.items || []).forEach((c, i) => walk(c, (path ? path + "." : "") + i, out));
+  return out;
+}
+
+// كلمات عامة ما ينفعش تحدد زرار (زي فين، ازاي، لجنة)
+const COMMON = new Set([
+  "ازاي", "امتى", "فين", "ايه", "هل", "كام", "ممكن", "عايز", "عاوز", "محتاج", "عنوان", "موعد", "مواعيد",
+  "سعر", "لجنة", "لجان", "مكان", "موقع", "اعرف", "ليه", "مين", "لو", "سمحت", "علشان", "عشان",
+].map(norm));
+
+function distinctTokens(text) {
+  return [...new Set(norm(text).split(" ").filter((t) => t.length >= 3 && !COMMON.has(t)))];
+}
+
+// يدور في: اسم الزرار + كلمات الاستدعاء (وزنهم 2)، ونص الرسالة (وزنه 1)
+// بيرجع الأدق أولاً، وحد أقصى 5
+function searchNodes(content, text) {
+  if (norm(text).length < 2) return [];
+  const t = padded(text);
+  const qt = distinctTokens(text);
+  const hits = [];
+  for (const { path, node } of walk(content)) {
+    if (path === "" || node.action === "ask") continue;
+    if (!node.text && !node.url && !(node.items || []).length) continue;
+    const kws = [...new Set([node.label, ...(Array.isArray(node.keywords) ? node.keywords : [])]
+      .map(norm).filter((k) => k.length >= 2))];
+    const nameScore = kws.filter((k) => t.includes(" " + k + " ")).length * 2;
+    // الكلمة المفردة جوه أي عبارة (زي "الاوراق" جوه "الأوراق المطلوبة")
+    const kwTokens = new Set(kws.flatMap((k) => k.split(" ")).filter((x) => x.length >= 3 && !COMMON.has(x)));
+    const tokenScore = qt.filter((tok) => kwTokens.has(tok)).length;
+
+    let snippet = "";
+    let textScore = 0;
+    const lines = String(node.text || "").split("\n");
+    for (const tok of qt) {
+      const line = lines.find((l) => norm(l).split(" ").includes(tok));
+      if (line) { textScore++; if (!snippet) snippet = line.trim(); }
+    }
+    const score = nameScore + tokenScore + textScore;
+    if (score > 0) {
+      hits.push({ path, node, score, matchedIn: nameScore + tokenScore > 0 ? "name" : "text", snippet });
+    }
+  }
+  return hits.sort((x, y) => y.score - x.score).slice(0, 5);
+}
+
+let cache = null;
+let cacheTime = 0;
+async function getContent() {
+  if (!cache || Date.now() - cacheTime > 60_000) {
+    const res = await fetch(CONTENT_URL + "?t=" + Date.now());
+    cache = await res.json();
+    cacheTime = Date.now();
+  }
+  return cache;
+}
+
+// "0.2" = الزرار رقم 0 جواه الزرار رقم 2. الجذر = ""
+function getNode(root, path) {
+  let node = root;
+  if (path === "") return node;
+  for (const i of path.split(".").map(Number)) node = node.items[i];
+  return node;
+}
+
+// يحوّل [كلمة](https://...) لكلمة قابلة للضغط، والباقي يتعرض زي ما هو
+function toHtml(text = "") {
+  const esc = (t) => t.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  return esc(text).replace(/\[([^\]]+)\]\((https:\/\/[^\s)]+)\)/g, (_, label, url) =>
+    `<a href="${url}">${label}</a>`);
+}
+
+// فلتر السؤال: كلمة من قايمة كلمات السؤال (من اللوحة أو الافتراضية)
+const QUESTION_WORDS = [
+  "ازاي", "إزاي", "امتى", "إمتى", "فين", "ايه", "إيه", "اي", "ايوه", "هل", "كام", "كم",
+  "ممكن", "عايز", "عاوز", "عايزة", "عاوزه", "محتاج", "محتاجة", "لو سمحت", "مين", "ليه", "علشان", "عشان",
+  "عنوان", "موعد", "مواعيد", "سعر", "تكلفة", "فيه", "فيها", "متاح", "متاحة", "بيفتح", "بيقفل", "بيشتغل",
+  "ينفع", "لازم", "المستندات", "مستندات", "أعرف", "اعرف", "قولي", "ابعتلي", "احجز", "أحجز",
+  "اقرب", "أقرب", "لجنة", "لجان", "الكشف", "كشف", "نتيجة", "طلب", "تأجيل", "الغاء", "إلغاء", "تعديل",
+];
+function looksLikeQuestion(text = "", words = QUESTION_WORDS) {
+  if (norm(text).length < 4) return false;
+  const t = padded(text);
+  return words.some((w) => t.includes(" " + norm(w) + " "));
+}
+
+// اسم الزرار الأب لأي مسار (عشان "تقصد؟" توضح المكان)
+function parentLabelOf(content, path) {
+  if (!path.includes(".")) return "";
+  const parent = getNode(content, path.slice(0, path.lastIndexOf(".")));
+  return parent?.label || "";
+}
+
+// يحوّل نص الاختيار: اسم البند + المكان بين قوسين
+function choiceLine(content, hit) {
+  const where = parentLabelOf(content, hit.path);
+  return where ? `• ${hit.node.label} (${where})` : `• ${hit.node.label}`;
+}
+
+function render(node, path, hidePhoneBtn = false) {
+  const kb = new InlineKeyboard();
+  (node.items || []).forEach((item, i) => {
+    if (item.action === "ask") kb.text(item.label, `ask:${path ? path + "." : ""}${i}`).row();
+    else if (item.url) kb.url(item.label, item.url).row();
+    else kb.text(item.label, `n:${path ? path + "." : ""}${i}`).row();
+  });
+  if (path === "" && phoneFeatureEnabled() && !hidePhoneBtn) kb.text(node.messages?.phoneMenuBtn || DEFAULT_PHONE_MENU_BTN, "sharephone").row();
+  if (path !== "") {
+    const parent = path.includes(".") ? path.slice(0, path.lastIndexOf(".")) : "";
+    kb.text("🔙 رجوع", `b:${parent}`).row();
+    kb.text("🏠 القايمة الرئيسية", "home");   // يرجّع لأول قايمة في البوت
+  }
+  return { text: node.text || node.label || "—", markup: kb };
+}
+
+// القايمة الرئيسية: زرار "مشاركة رقم الهاتف" يختفي لو العميل شارك رقمه فعلاً، ويفضل ظاهر لو ما شاركش (حتى لو اختار بدون مشاركة)
+async function renderFor(ctx, node, path) {
+  let hide = false;
+  if (path === "" && phoneFeatureEnabled() && ctx.chat?.id) {
+    if (ctx._phoneShared === undefined) ctx._phoneShared = await hasPhone(ctx.chat.id).catch(() => false);
+    hide = ctx._phoneShared;
+  }
+  return render(node, path, hide);
+}
+
+const HTML_OPTS = (markup) => ({
+  parse_mode: "HTML",
+  reply_markup: markup,
+  link_preview_options: { is_disabled: true },
+});
+
+const phoneKeyboard = (m = {}) => new Keyboard()
+  .requestContact(m.phoneShareBtn || DEFAULT_PHONE_SHARE_BTN).row()
+  .text(m.phoneSkipBtn || DEFAULT_PHONE_SKIP_BTN)
+  .oneTime().resized();
+
+const sendPhonePrompt = (ctx, m = {}) => ctx.reply(toHtml(m.phonePrompt || DEFAULT_PHONE_PROMPT), { parse_mode: "HTML", reply_markup: phoneKeyboard(m) });
+
+// طلب الرقم: أول تفاعل، وبعدها تذكير محدود حسب جدول (24 ساعة × 5 مرات لو تجاهل، وكل 3 أيام لمدة شهر لو اختار "بدون مشاركة").
+// العميل القديم يشوفه عند أول تفاعل له بعد التحديث، من غير أي رسالة جماعية.
+// ما بيشتغلش خالص لو PHONE_ENC_KEY مش مضبوط. وأي فشل هنا ما يوقفش البوت.
+async function maybePromptPhone(ctx) {
+  try {
+    if (!phoneFeatureEnabled() || ctx.chat?.type !== "private" || !ctx.from) return;
+    if (!(await phonePromptDue(ctx.chat.id))) return;
+    if (await isBanned(ctx.chat.id)) return;
+    try { await upsertInfo(ctx.from); } catch {}
+    const m = (await getContent().catch(() => ({}))).messages || {};
+    await sendPhonePrompt(ctx, m);
+  } catch (e) { console.error("[phone] prompt failed:", e?.message); }
+}
+
+// زرار "الاستمرار بدون مشاركة" (بيوصل كرسالة نصية عادية)
+async function handlePhoneSkip(ctx, text) {
+  if (!phoneFeatureEnabled() || ctx.chat?.type !== "private") return false;
+  const content = await getContent().catch(() => ({}));
+  const m = content.messages || {};
+  if (String(text).trim() !== (m.phoneSkipBtn || DEFAULT_PHONE_SKIP_BTN)) return false;
+  try { if (await isBanned(ctx.chat.id)) return true; } catch {}
+  try { await skipPhone(ctx.from); } catch {}
+  await ctx.reply(toHtml(m.phoneSkipped || DEFAULT_PHONE_SKIPPED), { parse_mode: "HTML", reply_markup: { remove_keyboard: true } });
+  const { text: t, markup } = await renderFor(ctx, content, "");
+  await ctx.reply(toHtml(t), HTML_OPTS(markup));
+  return true;
+}
+
+// استقبال جهة الاتصال: لازم تخص نفس المستخدم (contact.user_id === from.id)، وإلا بتترفض ومتتخزنش
+bot.on("message:contact", async (ctx) => {
+  try { if (await isBanned(ctx.chat.id)) return; } catch {}
+  if (!phoneFeatureEnabled() || ctx.chat.type !== "private" || !ctx.from) return;
+  const content = await getContent().catch(() => ({}));
+  const m = content.messages || {};
+  const c = ctx.message.contact;
+  const phone = c && Number(c.user_id) === Number(ctx.from.id) ? normalizePhone(c.phone_number) : null;
+  if (!phone) return ctx.reply(toHtml(m.phoneMismatch || DEFAULT_PHONE_MISMATCH), { parse_mode: "HTML", reply_markup: phoneKeyboard(m) });
+  let ok = false;
+  try { ok = await savePhone(ctx.from, phone); } catch (e) { console.error("[phone] save failed:", e?.message); }
+  if (!ok) return ctx.reply(toHtml(m.phoneError || DEFAULT_PHONE_ERROR), { parse_mode: "HTML", reply_markup: { remove_keyboard: true } });
+  await ctx.reply(toHtml(m.phoneThanks || DEFAULT_PHONE_THANKS), { parse_mode: "HTML", reply_markup: { remove_keyboard: true } });
+  ctx._phoneShared = true;   // لسه حافظين الرقم: القايمة اللي هتتبعت من غير الزرار
+  const { text, markup } = await renderFor(ctx, content, "");
+  await ctx.reply(toHtml(text), HTML_OPTS(markup));
+});
+
+// زرار القايمة الرئيسية: مشاركة الرقم لاحقاً
+bot.callbackQuery("sharephone", async (ctx) => {
+  await ctx.answerCallbackQuery();
+  try { if (await isBanned(ctx.chat.id)) return; } catch {}
+  if (!phoneFeatureEnabled() || ctx.chat?.type !== "private") return;
+  const m = (await getContent().catch(() => ({}))).messages || {};
+  try { await claimPhonePrompt(ctx.chat.id); } catch {}   // علشان الطلب التلقائي ما يظهرش بعد كده
+  if (await hasPhone(ctx.chat.id).catch(() => false)) return ctx.reply(toHtml(m.phoneAlready || DEFAULT_PHONE_ALREADY), HTML_OPTS((await renderFor(ctx, await getContent(), "")).markup));
+  return sendPhonePrompt(ctx, m);
+});
+
+// ربط / فصل تنبيهات الموظفين: /notify الكود  ،  /notify stop
+bot.command("notify", async (ctx) => {
+  const chat = ctx.chat;
+  if (!chat) return;
+  try { if (chat.type === "private" && (await isBanned(chat.id))) return; } catch {}
+  const arg = String(ctx.match || "").trim();
+  try {
+    if (/^(stop|off)$/i.test(arg)) return ctx.reply((await unlinkNotifyChat(chat.id)) ? "تم إيقاف التنبيهات على المحادثة دي." : "المحادثة دي مش مربوطة بالتنبيهات.");
+    if (!arg) return ctx.reply("لربط التنبيهات: افتح اللوحة، واضغط «ربط محادثة»، وابعت هنا:\n/notify الكود");
+    const label = chat.type === "private" ? ([ctx.from?.first_name, ctx.from?.last_name].filter(Boolean).join(" ") || "محادثة خاصة") : (chat.title || "جروب");
+    const r = await consumeLinkCode(arg, { id: chat.id, type: chat.type, label });
+    if (r.ok) {
+      const cfg = await getNotifyConfig().catch(() => ({ enabled: true }));
+      return ctx.reply(`تم ربط التنبيهات ✅${r.already ? " (المحادثة دي كانت مربوطة)" : ""}\nهتوصلك رسالة هنا لما يجي سؤال أو متابعة جديدة.${cfg.enabled ? "" : "\n\nملحوظة: التنبيهات متوقفة دلوقتي من اللوحة، شغّلها من هناك."}\nلإيقافها: /notify stop`);
+    }
+    if (r.error === "many") return ctx.reply("محاولات كتير غلط. استنى 10 دقايق وجرّب تاني.");
+    if (r.error === "full") return ctx.reply(`وصلت للحد الأقصى (${MAX_NOTIFY_CHATS} محادثات). افصل محادثة من اللوحة الأول.`);
+    if (r.error === "save") return ctx.reply("حصلت مشكلة وأنا بحفظ الربط. جرّب تاني.");
+    return ctx.reply("الكود غير صحيح أو منتهي. اطلب كود جديد من اللوحة.");
+  } catch (e) { console.error("[notify] link failed:", e?.message); }
+});
+
+bot.command("start", async (ctx) => {
+  try { if (await isBanned(ctx.chat.id)) return; } catch {}
+  const { text, markup } = await renderFor(ctx, await getContent(), "");
+  await ctx.reply(toHtml(text), HTML_OPTS(markup));
+  try { await trackVisitor(ctx.chat.id); } catch {}
+  await maybePromptPhone(ctx);
+});
+
+async function showNode(ctx, path, track) {
+  try { if (await isBanned(ctx.chat.id)) { await ctx.answerCallbackQuery(); return; } } catch {}
+  try {
+    try { await trackActive(ctx.chat.id); } catch {}
+    const node = getNode(await getContent(), path);
+    const { text, markup } = await renderFor(ctx, node, path);
+    await ctx.answerCallbackQuery();
+    await sendNodeVideo(ctx, node);
+    await ctx.reply(toHtml(text), HTML_OPTS(markup));
+    if (track) { try { await trackPress(path, node.label); } catch {} }
+    await maybePromptPhone(ctx);
+  } catch {
+    await ctx.answerCallbackQuery({ text: "المحتوى اتغير، ابعت /start", show_alert: true });
+  }
+}
+
+bot.callbackQuery(/^n:(.*)$/, (ctx) => showNode(ctx, ctx.match[1], true));
+bot.callbackQuery(/^b:(.*)$/, (ctx) => showNode(ctx, ctx.match[1], false));
+bot.callbackQuery("home", (ctx) => showNode(ctx, "", false));
+
+
+const SHORT_REPLIES = new Set([
+  "شكرا", "شكراً", "تمام", "تمام شكرا", "اهلا", "أهلا", "السلام عليكم", "وعليكم السلام", "الو", "الوو", "ok", "اوك", "ماشي",
+].map((x) => norm(x)));
+
+// الرد على خانة السؤال: قصير؟ ← بحث ← (إجابة واحدة: يرد) (أكتر: تقصد + بديل) (مفيش: يسجل)
+async function handleAskReply(ctx, text, content, m, root, attachments = []) {
+  const cleaned = norm(text);
+  if (cleaned.length < 3 || SHORT_REPLIES.has(cleaned)) {
+    return ctx.reply("اكتب سؤالك بشكل أوضح 👇", {
+      reply_markup: { force_reply: true, input_field_placeholder: "اكتب سؤالك..." },
+    });
+  }
+  const hits = searchNodes(content, text);
+  if (hits.length === 1) return showHit(ctx, hits[0]);
+  if (hits.length > 1) {
+    try { await setPending(ctx.chat.id, text); } catch {}
+    return showChoices(ctx, hits, content, m, true);
+  }
+  return saveAndThank(ctx, text, m, root, attachments);
+}
+
+// تسجيل السؤال + الشكر + المتبقي من الحد
+async function saveAndThank(ctx, text, m, root, attachments = []) {
+  // استقبال الأسئلة الجديدة متوقف؟ نعتذر قبل ما نستهلك حد العميل اليومي أو ناخد الصورة المعلقة
+  const intake = await getIntake().catch(() => ({ enabled: true }));
+  if (!intake.enabled) return ctx.reply(toHtml(intake.message || DEFAULT_INTAKE_MESSAGE), HTML_OPTS(root));
+  let quota = null;
+  try { quota = await questionAllowed(ctx.chat.id); } catch {}
+  if (!quota) return ctx.reply(toHtml(m.questionSaveError || DEFAULT_QUESTION_SAVE_ERROR), HTML_OPTS(root));
+  if (!quota.allowed) return ctx.reply(fill(m.limitReached || DEFAULT_LIMIT, { max: MAX_QUESTIONS_COUNT }), HTML_OPTS(root));
+  const customerName = [ctx.from?.first_name, ctx.from?.last_name].filter(Boolean).join(" ") || (ctx.from?.username ? `@${ctx.from.username}` : "");
+  // لو مفيش مرفق جاي مع السؤال، نشوف لو في صورة معلقة من قبل
+  let finalAttachments = attachments;
+  if (!finalAttachments.length) {
+    try {
+      const pendUrl = await takePendingImage(ctx.chat.id);
+      if (pendUrl) finalAttachments = [{ type: "image", url: pendUrl }];
+    } catch {}
+  }
+  let pushed = null;
+  try {
+    pushed = await pushQuestion(text, ctx.chat.id, customerName, finalAttachments, ctx.from?.username || "", true);
+  } catch {}
+  if (!pushed?.ok) {
+    if (pushed?.reason === "intake_paused") return ctx.reply(toHtml(pushed.message || DEFAULT_INTAKE_MESSAGE), HTML_OPTS(root));
+    return ctx.reply(toHtml(m.questionSaveError || DEFAULT_QUESTION_SAVE_ERROR), HTML_OPTS(root));
+  }
+  try { if (phoneFeatureEnabled()) await upsertInfo(ctx.from); } catch {}
+  const tail = quota.left > 0 ? "\n" + fill(m.remaining || DEFAULT_LEFT, { left: quota.left }) : "";
+  const thanks = await ctx.reply(toHtml((m.askThanks || DEFAULT_THANKS) + tail), HTML_OPTS(root));
+  await notifyStaffSafe({ kind: "question", questionId: pushed.question.id, name: customerName, text });   // بعد ما السؤال اتحفظ والعميل خد ردّه
+  return thanks;
+}
+
+// اختيارات "تقصد؟" (وممكن زرار بديل لو ده مش قصده)
+async function showChoices(ctx, hits, content, m, withSendAnyway) {
+  const top = hits.slice(0, 4);
+  const kb = new InlineKeyboard();
+  top.forEach((h) => {
+    if (h.node.url) kb.url(h.node.label, h.node.url).row();
+    else kb.text(h.node.label, `n:${h.path}`).row();
+  });
+  if (withSendAnyway) kb.text("📝 لا، ده مش قصدي، ابعت سؤالي", "pq").row();
+  const lines = top.map((h) => choiceLine(content, h)).join("\n");
+  return ctx.reply(toHtml((m.didYouMean || DEFAULT_DYM) + "\n\n" + lines), HTML_OPTS(kb));
+}
+
+// العميل قال "ده مش قصدي": نسجل السؤال المعلّق
+bot.callbackQuery("pq", async (ctx) => {
+  await ctx.answerCallbackQuery();
+  try { if (await isBanned(ctx.chat.id)) return; } catch {}
+  let text = null;
+  try { text = await takePending(ctx.chat.id); } catch {}
+  const content = await getContent().catch(() => ({}));
+  const m = content.messages || {};
+  const root = (await renderFor(ctx, content, "")).markup;
+  if (!text) return ctx.reply("انتهت المهلة، اكتب سؤالك تاني 👇", {
+    reply_markup: { force_reply: true, input_field_placeholder: "اكتب سؤالك..." },
+  });
+  return saveAndThank(ctx, text, m, root);
+});
+
+// زرار "ابعت سؤالك"
+bot.callbackQuery(/^ask:(.*)$/, async (ctx) => {
+  const path = ctx.match[1];
+  try {
+    try { if (await isBanned(ctx.chat.id)) { await ctx.answerCallbackQuery(); return; } } catch {}
+    try { await trackActive(ctx.chat.id); } catch {}
+    const content = await getContent();
+    const node = getNode(content, path);
+    await ctx.answerCallbackQuery();
+    const intake = await getIntake().catch(() => ({ enabled: true }));
+    if (!intake.enabled) {   // الزرار ظاهر، لكن بنعتذر بدل ما نفتح خانة السؤال
+      try { await trackPress(path, node.label); } catch {}
+      return ctx.reply(toHtml(intake.message || DEFAULT_INTAKE_MESSAGE), HTML_OPTS((await renderFor(ctx, content, "")).markup));
+    }
+    if ((await questionsLeft(ctx.chat.id)) <= 0) {
+      const lm = content.messages?.limitReached || DEFAULT_LIMIT;
+      return ctx.reply(fill(lm, { max: MAX_QUESTIONS_COUNT }), HTML_OPTS((await renderFor(ctx, content, "")).markup));
+    }
+    await ctx.reply(content.messages?.askPrompt || DEFAULT_PROMPT, {
+      reply_markup: { force_reply: true, input_field_placeholder: "اكتب سؤالك..." },
+    });
+    try { await trackPress(path, node.label); } catch {}
+  } catch {
+    await ctx.answerCallbackQuery({ text: "المحتوى اتغير، ابعت /start", show_alert: true });
+  }
+});
+
+// يعرض إجابة زرار واحد (زي ما لو العميل داس عليه)
+async function showHit(ctx, hit) {
+  try { await trackPress(hit.path, hit.node.label); } catch {}
+  await sendNodeVideo(ctx, hit.node);
+  if (hit.node.url) {
+    const kb = new InlineKeyboard().url(hit.node.label, hit.node.url);
+    return ctx.reply(toHtml(hit.node.text || hit.node.label), HTML_OPTS(kb));
+  }
+  const { text, markup } = render(hit.node, hit.path);
+  // لو المطابقة في النص: نعرض السطر اللي فيه المعلومة بس، ومعاه اسم المكان
+  if (hit.matchedIn === "text" && hit.snippet) {
+    return ctx.reply(toHtml(`📍 ${hit.node.label}\n${hit.snippet}`), HTML_OPTS(markup));
+  }
+  return ctx.reply(toHtml(text), HTML_OPTS(markup));
+}
+
+// الرد على رسالة التنبيه في جروب مربوط: QID يحدد السؤال، ولا يُقبل إلا من الجروب المرتبط.
+async function handleStaffGroupAnswer(ctx, text, msg, messages = {}) {
+  const reply = msg.reply_to_message;
+  if (!reply?.from?.is_bot) return false;
+  const original = String(reply.text || reply.caption || "");
+  const visibleRef = original.match(/\bQID:([a-f0-9-]{36})\b/i);
+  const hiddenEntity = (Array.isArray(reply.entities) ? reply.entities : []).find((e) =>
+    e.type === "text_link" && /^https:\/\/qref\.invalid\/([a-f0-9-]{36})$/i.test(String(e.url || ""))
+  );
+  const hiddenRef = hiddenEntity?.url?.match(/^https:\/\/qref\.invalid\/([a-f0-9-]{36})$/i);
+  const questionId = visibleRef?.[1] || hiddenRef?.[1];
+  if (!questionId) return false;
+  let linked = false;
+  try { linked = await isNotifyChat(ctx.chat.id); } catch {}
+  if (!linked) return false;
+
+  const answer = String(text || msg.caption || "").trim();
+  if (!answer) { await ctx.reply("اكتب نص الإجابة في ردّك على تنبيه السؤال عشان أبعته للعميل."); return true; }
+  if (answer.length > 3500) { await ctx.reply("الإجابة طويلة؛ الحد الأقصى 3500 حرف."); return true; }
+
+  let question = null;
+  try { question = (await getQuestions()).find((x) => x.id === questionId); } catch {}
+  if (!question?.chatId) { await ctx.reply("ملقتش السؤال ده في السجل؛ افتح لوحة التحكم للتأكد من حالته."); return true; }
+  if (!(["open", "followup_pending"].includes(question.status || "open"))) {
+    await ctx.reply("السؤال ده اترد عليه أو اتقفل بالفعل؛ افتح لوحة التحكم لو محتاج تراجع حالته.");
+    return true;
+  }
+
+  const followupCount = Array.isArray(question.followups) ? question.followups.length : 0;
+  const extra = await getExtraFollowups(question.chatId).catch(() => 0);
+  const limit = limitForItem(question, extra);
+  const finalAnswer = followupCount >= limit;
+  const configuredFooter = messages.answerFooter || `\n\n📌 مسموح بحد أقصى ${limit} متابعات على نفس السؤال. اضغط Reply للمتابعة، ولسؤال جديد استخدم «ابعت سؤالك».`;
+  const answerFooter = configuredFooter.replace(/حد أقصى 3 متابعات/g, `حد أقصى ${limit} متابعات`);
+  const footer = finalAnswer ? "" : (followupCount > 0
+    ? `\n\n📩 المتابعة: ${followupCount}/${limit}`
+    : answerFooter);
+  const replyMarkup = finalAnswer ? undefined : {
+    force_reply: true,
+    input_field_placeholder: String(messages.followupPlaceholder || "اكتب متابعة السؤال هنا...").slice(0, 64),
+  };
+  let sent;
+  try {
+    sent = await ctx.api.sendMessage(question.chatId, `📩 رد على سؤالك:\n\n${answer}${footer}`, replyMarkup ? { reply_markup: replyMarkup } : {});
+  } catch (e) {
+    console.error("[group-answer] Telegram send failed:", e?.description || e?.message);
+    await ctx.reply("ماقدرتش أوصل الرد للعميل. جرّب تاني من فضلك.");
+    return true;
+  }
+
+  const updated = await answerQuestion(question.id, answer, sent.message_id).catch(() => null);
+  if (!updated) {
+    await ctx.reply("الرد اتبعت للعميل، لكن تعذر تحديث حالة السؤال في السجل بسبب مشكلة تخزين. ما تبعتش نفس الرد مرة تانية؛ راجع السؤال من اللوحة.");
+    return true;
+  }
+  if (updated.status === "archived") {
+    const closed = messages.manualClosed || "🔒 تم إغلاق هذا السؤال من الإدارة.\n\nإذا كان لديك استفسار جديد، استخدم زر «ابعت سؤالك» 👇";
+    await ctx.api.sendMessage(question.chatId, closed).catch(() => {});
+  }
+  await ctx.reply("تم إرسال الرد للعميل وتحديث حالة السؤال ✅");
+  return true;
+}
+
+// الرسايل النصية: طبي؟ ← رد على خانة السؤال؟ ← بحث بالكلمات ← رد عام
+async function handleMessageCore(ctx, text, msg) {
+  try { if (await isBanned(ctx.chat.id)) return; } catch {}
+  try { await trackActive(ctx.chat.id); } catch {}
+  const content = await getContent().catch(() => ({}));
+  const m = content.messages || {};
+  try { await notifyExpired(await maybeExpireQuestions(), m.autoClosed || DEFAULT_CLOSED_AUTO); } catch {}
+  const root = (await renderFor(ctx, content, "")).markup;
+
+  if (["group", "supergroup"].includes(ctx.chat.type) && await handleStaffGroupAnswer(ctx, text, msg, m)) return;
+
+  const repliedMessageId = msg.reply_to_message?.message_id;
+  if (msg.reply_to_message?.from?.is_bot && repliedMessageId) {
+    const parent = await questionForReply(ctx.chat.id, repliedMessageId).catch(() => null);
+    if (parent) {
+      const attachments = await extractAttachments(msg);
+      const followupText = text || (attachments.length ? "📎 مرفق" : "");
+      if (!followupText) return ctx.reply(m.followupLimit || DEFAULT_FOLLOWUP_LIMIT, HTML_OPTS(root));
+      const followup = await addFollowup(parent.id, followupText, attachments).catch(() => null);
+      if (followup?.limitReached) return ctx.reply(m.followupLimit || DEFAULT_FOLLOWUP_LIMIT, HTML_OPTS(root));
+      if (followup) {
+        const sent = await ctx.reply(m.followupReceived || DEFAULT_FOLLOWUP_RECEIVED, HTML_OPTS(root));
+        await notifyStaffSafe({ kind: "followup", questionId: parent.id, n: (followup.followups || []).length, name: parent.customerName, text: followupText });
+        return sent;
+      }
+      return ctx.reply("حصلت مشكلة مؤقتة في حفظ المتابعة، وما اتسجلتش. جرّب تبعتها تاني بعد شوية من فضلك 🙏", HTML_OPTS(root));
+    }
+  }
+
+  const repliedText = msg.reply_to_message?.text || "";
+  if (msg.reply_to_message?.from?.is_bot && repliedText.startsWith("📩 رد على سؤالك:")) {
+    return ctx.reply("لو عندك سؤال جديد، اضغط على زر «ابعت سؤالك» واكتبه هناك 👇", HTML_OPTS(root));
+  }
+
+  if (text && hasMedical(text, content.medicalKeywords)) {
+    return ctx.reply(toHtml(m.medical || DEFAULT_MEDICAL), HTML_OPTS(root));
+  }
+
+  if (text && hasInquiry(text, content.inquiryKeywords)) {
+    const btnText = (m.inquiryButtonText || "").trim();
+    const btnUrl = (m.inquiryButtonUrl || "").trim();
+    const validUrl = /^https:\/\/\S+$/.test(btnUrl);
+    const kb = validUrl ? new InlineKeyboard().url(btnText || "📅 فتح", btnUrl) : undefined;
+    return ctx.reply(toHtml(m.inquiry || DEFAULT_INQUIRY), HTML_OPTS(kb));
+  }
+
+  const r = msg.reply_to_message;
+  const rText = (r && r.text) || "";
+  const prompt = m.askPrompt || DEFAULT_PROMPT;
+  const isAskPrompt = rText === prompt || rText.startsWith("اكتب سؤالك") || rText.startsWith("مش واضح إنه سؤال");
+  if (r && r.from?.is_bot && isAskPrompt) {
+    const attachments = await extractAttachments(msg);
+    const finalText = text || (attachments.length ? "📎 مرفق" : "");
+    if (!finalText) return ctx.reply("اكتب سؤالك أو أرسل صورة 👇", { reply_markup: { force_reply: true, input_field_placeholder: "اكتب سؤالك..." } });
+    return handleAskReply(ctx, finalText, content, m, root, attachments);
+  }
+
+  // صورة بدون reply: نرفعها لـ ImgBB ونحتفظ بالرابط مؤقتاً، ونطلب منه يكتب سؤاله
+  if (!text && (msg.photo || msg.document)) {
+    const intakeNow = await getIntake().catch(() => ({ enabled: true }));
+    if (!intakeNow.enabled) return ctx.reply(toHtml(intakeNow.message || DEFAULT_INTAKE_MESSAGE), HTML_OPTS(root));
+    const url = await uploadToImgBB(msg.photo ? msg.photo[msg.photo.length - 1].file_id : msg.document.file_id).catch(() => null);
+    if (url) {
+      try { await setPendingImage(ctx.chat.id, url); } catch {}
+      return ctx.reply("تم استلام الصورة 🖼️\nدلوقتي اكتب سؤالك وهتتبعت الصورة معاه 👇", {
+        reply_markup: { force_reply: true, input_field_placeholder: "اكتب سؤالك..." },
+      });
+    }
+    return ctx.reply(toHtml(m.fallback || DEFAULT_FALLBACK), HTML_OPTS(root));
+  }
+
+  if (!text) return ctx.reply(toHtml(m.fallback || DEFAULT_FALLBACK), HTML_OPTS(root));
+
+  const hits = searchNodes(content, text);
+  if (hits.length === 1) return showHit(ctx, hits[0]);
+  if (hits.length > 1) return showChoices(ctx, hits, content, m, false);
+
+  // لا نسجل الكلمات غير المتطابقة؛ الإحصاء التفصيلي ده اختياري وكان يستهلك أوامر لكل رسالة.
+  return ctx.reply(toHtml(m.fallback || DEFAULT_FALLBACK), HTML_OPTS(root));
+}
+
+async function handleMessage(ctx, text, msg) {
+  if (text && await handlePhoneSkip(ctx, text).catch(() => false)) return;
+  await handleMessageCore(ctx, text, msg);
+  // نطلب الرقم بعد الرد العادي، ومش في وسط سؤال/متابعة (عشان ما نبوّظش خانة الكتابة)
+  if (msg.text && !msg.reply_to_message) await maybePromptPhone(ctx);
+}
+
+bot.on("message:text", (ctx) => handleMessage(ctx, ctx.message.text || "", ctx.message));
+bot.on("message:photo", (ctx) => handleMessage(ctx, ctx.message.caption || "", ctx.message));
+bot.on("message:document", (ctx) => handleMessage(ctx, ctx.message.caption || "", ctx.message));
+
+export default webhookCallback(bot, "https");

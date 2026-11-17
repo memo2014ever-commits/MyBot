@@ -1,0 +1,11 @@
+{
+  "name": "legan-info-bot",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@upstash/redis": "^1.41.0",
+    "firebase-admin": "^13.10.0",
+    "grammy": "^1.30.0"
+  }
+}
