@@ -2,7 +2,7 @@
 // كل الأسرار في متغيرات البيئة في Vercel، ومش ظاهرة للمتصفح
 import { timingSafeEqual, createHash } from "crypto";
 import { firestoreCommand } from "./firebase.js";
-import { getStats, getStatsByDay, getOverviewDay, getQuestions, getQuestionsAndCloseExpired, deleteQuestion, answerQuestion, updateAnswerHistory, closeQuestion, banUser, unbanUser, getBans, getBanInfo,
+import { getStats, getStatsByDay, getOverviewDay, getQuestions, getQuestionsVersion, getQuestionsCached, seedQuestionsCache, invalidateQuestionsCache, todayKey, getQuestionsAndCloseExpired, deleteQuestion, answerQuestion, updateAnswerHistory, closeQuestion, banUser, unbanUser, getBans, getBanInfo,
   getIntake, setIntake, computeQuestionStats, DEFAULT_INTAKE_MESSAGE, MAX_FOLLOWUPS, MAX_EXTRA_PER_OPERATION, getExtraFollowups, getAllExtras, limitForItem, followupLimitState, adjustQuestionExtra, clearPermanentExtra, claimOperation, logLimitChange, getLimitLog } from "./stats.js";
 import { phonesSharedOnDay, phoneFeatureEnabled, phoneSharedCount, customerMap, listCustomers, customerDetail } from "./customers.js";
 import { explainError } from "./errors.js";
@@ -107,12 +107,22 @@ async function sendCloseNotice(chatId, automatic = false, messages = {}) {
   await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ chat_id: chatId, text }) });
 }
 
+// كاش تقارير اللوحة (إحصائيات/أيام/عملاء) على السيرفر: الأرقام دي بتتحسب بقراءة آلاف المستندات في Firestore، فمفيش داعي نعيدها كل مرة.
+// أي إجراء تعديل من اللوحة بيمسح الكاش. وزرار "تحديث" في اللوحة بيتجاوزه.
+const REPORT_TTL_MS = 5 * 60 * 1000, PAST_DAY_TTL_MS = 60 * 60 * 1000;
+const reportCache = new Map();
+const cachedReport = (key, ttl) => { const e = reportCache.get(key); return e && Date.now() - e.t < ttl ? e.data : null; };
+const rememberReport = (key, data) => { if (reportCache.size > 200) reportCache.clear(); reportCache.set(key, { t: Date.now(), data }); return data; };
+const dayTtl = (date) => (date < todayKey() ? PAST_DAY_TTL_MS : REPORT_TTL_MS);
+const READ_ONLY_ACTIONS = new Set(["get", "stats", "statsDay", "overviewDay", "customersDay", "questions", "getIntake", "notifyGet", "customers", "customerDetail", "followupLimitInfo", "getBans", "getBanInfo", "history", "version"]);
+
 export default async function handler(req, res) {
   if (req.method !== "POST") return res.status(405).json({ error: "method" });
 
   const { username, password, action, content, message, ref, answer, answerIndex } = req.body || {};
   const role = authenticate(username, password);
   if (!role) return res.status(401).json({ error: "اسم المستخدم أو الباسورد غلط" });
+  if (!READ_ONLY_ACTIONS.has(action)) { reportCache.clear(); invalidateQuestionsCache(); }
 
   try {
     if (action === "get") {
@@ -121,11 +131,12 @@ export default async function handler(req, res) {
     }
 
     if (action === "stats") {
+      if (req.body.force !== true) { const hit = cachedReport("stats", REPORT_TTL_MS); if (hit) return res.json(hit); }
       const st = await getStats();
       // إحصائيات مشاركة الأرقام: بدون أي رقم هاتف. الإجمالي هو نفس "إجمالي المشتركين (تقريبي)" الموجود بالفعل
       const shared = await phoneSharedCount().catch(() => 0);
       const total = Math.max(Number(st.subscribersTotal) || 0, shared);
-      st.questionStats = computeQuestionStats(await getQuestions().catch(() => []));
+      st.questionStats = computeQuestionStats(await getQuestionsCached().catch(() => []));
       st.intake = await getIntake();
       // قاعدة المشتركين المسجّلين بالـ ID (مختلفة عن "إجمالي المشتركين (تقريبي)" القديم)
       const regCount = await registryCount().catch(() => 0);
@@ -134,31 +145,42 @@ export default async function handler(req, res) {
         enabled: phoneFeatureEnabled(), shared, notShared: Math.max(0, total - shared), total,
         rate: total > 0 ? Math.min(100, Math.round((shared / total) * 1000) / 10) : 0,
       };
-      return res.json(st);
+      st.generatedAt = Date.now();
+      return res.json(rememberReport("stats", st));
     }
 
     if (action === "statsDay") {
       if (typeof ref !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(ref)) {
         return res.status(400).json({ error: "تاريخ غير صحيح" });
       }
-      return res.json(await getStatsByDay(ref));
+      const key = `statsDay:${ref}`, hit = cachedReport(key, dayTtl(ref));
+      if (hit && req.body.force !== true) return res.json(hit);
+      return res.json(rememberReport(key, await getStatsByDay(ref)));
     }
 
     // ملخص يوم محدد للكروت العلوية (قسم الإحصائيات)
     if (action === "overviewDay") {
       if (typeof ref !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(ref)) return res.status(400).json({ error: "تاريخ غير صحيح" });
-      return res.json(await getOverviewDay(ref));
+      const key = `overviewDay:${ref}`, hit = cachedReport(key, dayTtl(ref));
+      if (hit && req.body.force !== true) return res.json(hit);
+      return res.json(rememberReport(key, await getOverviewDay(ref)));
     }
 
     // إحصائيات العملاء ليوم محدد: المشاركون بأرقامهم + المسجّلون بالـ ID
     if (action === "customersDay") {
       if (typeof ref !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(ref)) return res.status(400).json({ error: "تاريخ غير صحيح" });
+      const key = `customersDay:${ref}`, hit = cachedReport(key, dayTtl(ref));
+      if (hit && req.body.force !== true) return res.json(hit);
       const [shared, registered] = await Promise.all([phonesSharedOnDay(ref).catch(() => 0), registeredOnDay(ref).catch(() => 0)]);
-      return res.json({ date: ref, shared, registered });
+      return res.json(rememberReport(key, { date: ref, shared, registered }));
     }
 
     if (action === "questions") {
+      // رقم النسخة بيتقرا قبل القايمة. لو اللوحة معاها نفس الرقم نرد "مفيش جديد" بقراءة واحدة بدل قراءة كل الأسئلة
+      const ver = await getQuestionsVersion().catch(() => null);
+      if (ver !== null && typeof req.body.ver === "number" && req.body.ver === ver && req.body.full !== true) return res.json({ unchanged: true, ver });
       const { questions, expired } = await getQuestionsAndCloseExpired();
+      seedQuestionsCache(questions);
       // نكلّم GitHub بس لو فيه أسئلة انتهت فعلاً (بدل كل تحديث): ده كان أكبر سبب لبطء الصفحة
       if (expired.length) {
         const systemMessages = (await readCurrent()).content.messages || {};
@@ -168,7 +190,7 @@ export default async function handler(req, res) {
       const [extras, intake] = await Promise.all([getAllExtras().catch(() => ({})), getIntake()]);
       // بيانات أصحاب الأسئلة. رقم الهاتف للأدمن فقط
       const customers = await customerMap(questions.map((x) => x.chatId), { withPhones: role === "admin" }).catch(() => ({}));
-      return res.json({ questions, customers, intake: { ...intake, defaultMessage: DEFAULT_INTAKE_MESSAGE }, phoneFeature: phoneFeatureEnabled(), extras, defaultFollowupLimit: MAX_FOLLOWUPS });
+      return res.json({ questions, customers, intake: { ...intake, defaultMessage: DEFAULT_INTAKE_MESSAGE }, phoneFeature: phoneFeatureEnabled(), extras, defaultFollowupLimit: MAX_FOLLOWUPS, ver });
     }
 
     if (action === "answerQuestion") {
@@ -288,7 +310,7 @@ export default async function handler(req, res) {
     if (action === "customers") {
       const filter = ["all", "shared", "notshared"].includes(req.body.filter) ? req.body.filter : "all";
       const q = typeof req.body.q === "string" ? req.body.q.slice(0, 60) : "";
-      const rows = await listCustomers({ questions: await getQuestions(), filter, q, withPhones: role === "admin" });
+      const rows = await listCustomers({ questions: await getQuestionsCached(), filter, q, withPhones: role === "admin" });
       // تقسيم صفحات من السيرفر (50 عميل في الصفحة) علشان القايمة ما تطولش
       const PAGE = 50, pages = Math.max(1, Math.ceil(rows.length / PAGE));
       const page = Math.min(pages, Math.max(1, parseInt(req.body.page, 10) || 1));
@@ -298,7 +320,7 @@ export default async function handler(req, res) {
     if (action === "customerDetail") {
       if (typeof ref !== "string" || !/^\d{1,20}$/.test(ref.trim())) return res.status(400).json({ error: "معرف العميل غير صحيح" });
       const c = await customerDetail(ref.trim(), { withPhones: role === "admin" });
-      const mine = (await getQuestions()).filter((x) => String(x.chatId) === ref.trim());
+      const mine = (await getQuestionsCached()).filter((x) => String(x.chatId) === ref.trim());
       const base = c || { chatId: ref.trim(), name: mine.find((x) => x.customerName)?.customerName || "", username: "", firstSeen: null, phoneState: "phone_not_requested", hasPhone: false };
       return res.json({ customer: { ...base, questionsCount: mine.length, extraFollowups: await getExtraFollowups(ref.trim()) }, canSeePhone: role === "admin" });
     }

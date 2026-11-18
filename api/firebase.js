@@ -1,6 +1,6 @@
 import { createHash } from "crypto";
 import { cert, getApps, initializeApp } from "firebase-admin/app";
-import { getFirestore } from "firebase-admin/firestore";
+import { FieldValue, getFirestore } from "firebase-admin/firestore";
 
 const ROOTS = "bot_data";
 let firestore;
@@ -75,6 +75,12 @@ async function ensureType(root, key, type) {
 async function readEntries(root) {
   const snapshot = await root.collection("entries").get();
   return snapshot.docs;
+}
+
+// عدد العناصر بدون قراءتها: استعلام count() بيتحسب تقريباً بقراءة واحدة لكل 1000 عنصر (بدل قراءة كل عنصر)
+async function countEntries(root) {
+  const snapshot = await root.collection("entries").count().get();
+  return Number(snapshot.data().count) || 0;
 }
 
 async function deleteKey(root) {
@@ -162,105 +168,103 @@ async function runCommand(cmd) {
     });
   }
 
-  if (["HGET", "HMGET", "HGETALL", "HLEN", "HKEYS", "HEXISTS", "HSET", "HSETNX", "HDEL", "HINCRBY"].includes(operation)) {
-    const data = await validRoot(root);
-    if (operation === "HGET" || operation === "HMGET") {
-      if (!data) return operation === "HMGET" ? args.map(() => null) : null;
-      if (data.type !== "hash") throw new Error(`Firestore data type mismatch for key ${key}`);
-      const values = await Promise.all(args.map(async (field) => {
-        const doc = await entryRef(root, field).get();
-        return doc.exists ? doc.data().value : null;
-      }));
-      return operation === "HGET" ? values[0] : values;
-    }
-    if (operation === "HGETALL" || operation === "HLEN" || operation === "HKEYS" || operation === "HEXISTS") {
-      if (!data) return operation === "HGETALL" || operation === "HKEYS" ? [] : 0;
-      if (data.type !== "hash") throw new Error(`Firestore data type mismatch for key ${key}`);
-      if (operation === "HEXISTS") return (await entryRef(root, args[0]).get()).exists ? 1 : 0;
-      const docs = await readEntries(root);
-      if (operation === "HLEN") return docs.length;
-      if (operation === "HKEYS") return docs.map((doc) => doc.data().field);
-      return docs.flatMap((doc) => [doc.data().field, doc.data().value]);
-    }
-    if (operation === "HSET" || operation === "HSETNX") {
-      if (operation === "HSETNX") {
-        const field = String(args[0]), value = String(args[1]);
-        return db.runTransaction(async (tx) => {
-          const rootSnapshot = await tx.get(root);
-          const current = rootSnapshot.exists ? rootSnapshot.data() : null;
-          if (current && !expired(current) && current.type !== "hash") throw new Error(`Firestore data type mismatch for key ${key}`);
-          const ref = entryRef(root, field);
-          const existing = await tx.get(ref);
-          if (existing.exists && !expired(current)) return 0;
-          if (!current || expired(current)) tx.set(root, { key, type: "hash", nextIndex: 0 });
-          tx.set(ref, { field, value });
-          return 1;
-        });
-      }
-      if (args.length < 2 || args.length % 2 !== 0) throw new Error("HSET requires field/value pairs");
-      await ensureType(root, key, "hash");
-      const batch = db.batch();
+  // ---- الهاش: القراءات مش بتقرا document الجذر خالص (الهاش مفيهوش انتهاء صلاحية)، والعدّ بـ count() ----
+  if (operation === "HGET" || operation === "HMGET") {
+    const refs = args.map((field) => entryRef(root, field));
+    const snapshots = refs.length ? await db.getAll(...refs) : [];
+    const values = snapshots.map((doc) => (doc.exists ? doc.data().value : null));
+    return operation === "HGET" ? values[0] ?? null : values;
+  }
+  if (operation === "HEXISTS") return (await entryRef(root, args[0]).get()).exists ? 1 : 0;
+  if (operation === "HLEN") return countEntries(root);
+  if (operation === "HKEYS") return (await readEntries(root)).map((doc) => doc.data().field);
+  if (operation === "HGETALL") return (await readEntries(root)).flatMap((doc) => [doc.data().field, doc.data().value]);
+
+  if (operation === "HSETNX") {
+    const field = String(args[0]), value = String(args[1]);
+    return db.runTransaction(async (tx) => {
+      const rootSnapshot = await tx.get(root);
+      const current = rootSnapshot.exists ? rootSnapshot.data() : null;
+      if (current && !expired(current) && current.type !== "hash") throw new Error(`Firestore data type mismatch for key ${key}`);
+      const ref = entryRef(root, field);
+      const existing = await tx.get(ref);
+      if (existing.exists && !expired(current)) return 0;
+      if (!current || expired(current)) tx.set(root, { key, type: "hash", nextIndex: 0 });
+      tx.set(ref, { field, value });
+      return 1;
+    });
+  }
+  if (operation === "HSET") {
+    if (args.length < 2 || args.length % 2 !== 0) throw new Error("HSET requires field/value pairs");
+    const pairs = [];
+    for (let i = 0; i < args.length; i += 2) pairs.push({ field: String(args[i]), value: String(args[i + 1]) });
+    // transaction واحدة: قراءة الجذر + قراءة الحقول، وبعدها الكتابة (قبل كده: 3 قراءات منفصلة + batch)
+    return db.runTransaction(async (tx) => {
+      const rootSnapshot = await tx.get(root);
+      const current = rootSnapshot.exists ? rootSnapshot.data() : null;
+      if (current && !expired(current) && current.type !== "hash") throw new Error(`Firestore data type mismatch for key ${key}`);
+      const refs = pairs.map((pair) => entryRef(root, pair.field));
+      const snapshots = await Promise.all(refs.map((ref) => tx.get(ref)));
+      if (!current || expired(current)) tx.set(root, { key, type: "hash", nextIndex: 0 });
       let added = 0;
-      for (let i = 0; i < args.length; i += 2) {
-        const field = String(args[i]);
-        const ref = entryRef(root, field);
-        const snapshot = await ref.get();
-        if (!snapshot.exists) added++;
-        batch.set(ref, { field, value: String(args[i + 1]) });
-      }
-      await batch.commit();
+      pairs.forEach((pair, i) => { if (!snapshots[i].exists) added++; tx.set(refs[i], { field: pair.field, value: pair.value }); });
       return added;
-    }
-    if (operation === "HDEL") {
-      if (!data) return 0;
-      if (data.type !== "hash") throw new Error(`Firestore data type mismatch for key ${key}`);
-      const refs = args.map((field) => entryRef(root, field));
-      const snapshots = await Promise.all(refs.map((ref) => ref.get()));
-      const batch = db.batch();
-      let removed = 0;
-      snapshots.forEach((snapshot, i) => { if (snapshot.exists) { removed++; batch.delete(refs[i]); } });
-      if (removed) await batch.commit();
-      return removed;
-    }
-    if (operation === "HINCRBY") {
-      const field = String(args[0]), amount = Number(args[1]);
-      return db.runTransaction(async (tx) => {
-        const rootSnapshot = await tx.get(root);
-        const current = rootSnapshot.exists ? rootSnapshot.data() : null;
-        if (current && !expired(current) && current.type !== "hash") throw new Error(`Firestore data type mismatch for key ${key}`);
-        const ref = entryRef(root, field);
-        const snapshot = await tx.get(ref);
-        const value = (snapshot.exists ? Number(snapshot.data().value) : 0) + amount;
-        if (!Number.isSafeInteger(value)) throw new Error(`Invalid integer value for key ${key}`);
-        if (!current || expired(current)) tx.set(root, { key, type: "hash", nextIndex: 0 });
-        tx.set(ref, { field, value: String(value) });
-        return value;
-      });
-    }
+    });
+  }
+  if (operation === "HDEL") {
+    const refs = args.map((field) => entryRef(root, field));
+    const snapshots = await Promise.all(refs.map((ref) => ref.get()));
+    const batch = db.batch();
+    let removed = 0;
+    snapshots.forEach((snapshot, i) => { if (snapshot.exists) { removed++; batch.delete(refs[i]); } });
+    if (removed) await batch.commit();
+    return removed;
+  }
+  if (operation === "HINCRBY") {
+    const field = String(args[0]), amount = Number(args[1]);
+    return db.runTransaction(async (tx) => {
+      const rootSnapshot = await tx.get(root);
+      const current = rootSnapshot.exists ? rootSnapshot.data() : null;
+      if (current && !expired(current) && current.type !== "hash") throw new Error(`Firestore data type mismatch for key ${key}`);
+      const ref = entryRef(root, field);
+      const snapshot = await tx.get(ref);
+      const value = (snapshot.exists ? Number(snapshot.data().value) : 0) + amount;
+      if (!Number.isSafeInteger(value)) throw new Error(`Invalid integer value for key ${key}`);
+      if (!current || expired(current)) tx.set(root, { key, type: "hash", nextIndex: 0 });
+      tx.set(ref, { field, value: String(value) });
+      return value;
+    });
   }
 
-  if (["SADD", "SREM", "SMEMBERS", "PFADD", "PFCOUNT"].includes(operation)) {
-    const type = operation.startsWith("PF") ? "hll" : "set";
+  // ---- الست و HyperLogLog ----
+  if (operation === "SMEMBERS") return (await readEntries(root)).map((doc) => doc.data().field);
+  if (operation === "PFCOUNT") {
     const data = await validRoot(root);
-    if (operation === "SMEMBERS" || operation === "PFCOUNT") {
-      if (!data) return operation === "SMEMBERS" ? [] : 0;
-      if (data.type !== type) throw new Error(`Firestore data type mismatch for key ${key}`);
-      const docs = await readEntries(root);
-      return operation === "PFCOUNT" ? (Number(data.baselineCount) || 0) + docs.length : docs.map((doc) => doc.data().field);
-    }
-    if (operation === "SADD" || operation === "PFADD") {
-      await ensureType(root, key, type);
-      const results = await Promise.all(args.map((field) => db.runTransaction(async (tx) => {
-        const ref = entryRef(root, field);
-        const snapshot = await tx.get(ref);
-        if (snapshot.exists) return 0;
-        tx.set(ref, { field: String(field), value: "1" });
-        return 1;
-      })));
-      return results.reduce((total, result) => total + result, 0);
-    }
-    if (!data) return 0;
-    if (data.type !== type) throw new Error(`Firestore data type mismatch for key ${key}`);
+    if (!data) return 0;   // يوم/مفتاح فاضي: قراءة واحدة بس
+    if (data.type !== "hll") throw new Error(`Firestore data type mismatch for key ${key}`);
+    return (Number(data.baselineCount) || 0) + (await countEntries(root));
+  }
+  if (operation === "SADD" || operation === "PFADD") {
+    const type = operation === "PFADD" ? "hll" : "set";
+    const fields = args.map(String);
+    // transaction واحدة لكل الحقول (قبل كده: transaction للنوع + transaction لكل حقل + قراءة الجذر قبلهم)
+    return db.runTransaction(async (tx) => {
+      const rootSnapshot = await tx.get(root);
+      const current = rootSnapshot.exists ? rootSnapshot.data() : null;
+      if (current && !expired(current) && current.type !== type) throw new Error(`Firestore data type mismatch for key ${key}`);
+      const refs = fields.map((field) => entryRef(root, field));
+      const snapshots = await Promise.all(refs.map((ref) => tx.get(ref)));
+      const added = new Set();
+      fields.forEach((field, i) => {
+        if (snapshots[i].exists || added.has(field)) return;
+        added.add(field);
+        tx.set(refs[i], { field, value: "1" });
+      });
+      if (!current || expired(current)) tx.set(root, { key, type, nextIndex: 0 });
+      return added.size;
+    });
+  }
+  if (operation === "SREM") {
     const refs = args.map((field) => entryRef(root, field));
     const snapshots = await Promise.all(refs.map((ref) => ref.get()));
     const batch = db.batch();
@@ -270,6 +274,11 @@ async function runCommand(cmd) {
     return removed;
   }
 
+  // ---- القوائم (الأسئلة وغيرها). كل تغيير بيرفع رقم نسخة "ver" في document الجذر علشان اللوحة تعرف إن فيه جديد بقراءة واحدة ----
+  if (operation === "LVER") {
+    const snapshot = await root.get();
+    return snapshot.exists ? Number(snapshot.data().ver) || 0 : 0;
+  }
   if (operation === "LPUSH") {
     if (!args.length) throw new Error("LPUSH requires a value");
     const result = await db.runTransaction(async (tx) => {
@@ -284,18 +293,17 @@ async function runCommand(cmd) {
         refs.push(root.collection("entries").doc(`item_${String(-nextIndex).padStart(16, "0")}`));
         values.push(String(value));
       }
-      tx.set(root, { key, type: "list", nextIndex });
+      tx.set(root, { key, type: "list", nextIndex, ver: (Number(current?.ver) || 0) + 1 });
       refs.forEach((ref, i) => tx.set(ref, { position: nextIndex + args.length - 1 - i, value: values[i] }));
       return true;
     });
-    return result ? (await root.collection("entries").get()).size : 0;
+    return result ? countEntries(root) : 0;   // طول القائمة بـ count() (قبل كده كان بيقرا القائمة كلها بعد كل إضافة)
   }
   if (operation === "LRANGE" || operation === "LSET" || operation === "LREM") {
-    const data = await validRoot(root);
-    if (!data) return operation === "LRANGE" ? [] : operation === "LSET" ? null : 0;
-    if (data.type !== "list") throw new Error(`Firestore data type mismatch for key ${key}`);
-    const snapshot = await root.collection("entries").orderBy("position", "asc").get();
-    const docs = snapshot.docs;
+    let query = root.collection("entries").orderBy("position", "asc");
+    // مدى موجب (من الأول) بنقرا العدد المطلوب بس بدل القائمة كلها
+    if (operation === "LRANGE" && Number(args[0]) >= 0 && Number(args[1]) >= 0) query = query.limit(Number(args[1]) + 1);
+    const docs = (await query.get()).docs;
     if (operation === "LRANGE") {
       let start = Number(args[0]), end = Number(args[1]);
       if (start < 0) start = docs.length + start;
@@ -307,7 +315,10 @@ async function runCommand(cmd) {
       if (index < 0) index = docs.length + index;
       const doc = docs[index];
       if (!doc) return null;
-      await doc.ref.update({ value: String(args[1]) });
+      const batch = db.batch();
+      batch.update(doc.ref, { value: String(args[1]) });
+      batch.update(root, { ver: FieldValue.increment(1) });
+      await batch.commit();
       return "OK";
     }
     const count = Number(args[0]), value = String(args[1]);
@@ -316,6 +327,7 @@ async function runCommand(cmd) {
     if (selected.length) {
       const batch = db.batch();
       selected.forEach((doc) => batch.delete(doc.ref));
+      batch.update(root, { ver: FieldValue.increment(1) });
       await batch.commit();
     }
     return selected.length;

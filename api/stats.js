@@ -141,6 +141,24 @@ export async function getQuestions() {
   const raw = (await firestoreCommand(["LRANGE", "questions", 0, -1])) || [];
   return raw.map((r) => ({ raw: r, ...JSON.parse(r) }));
 }
+
+// رقم نسخة قايمة الأسئلة (بيزيد مع أي إضافة/تعديل/حذف). قراءة واحدة بدل قراءة القايمة كلها
+export async function getQuestionsVersion() {
+  return Number(await firestoreCommand(["LVER", "questions"])) || 0;
+}
+
+// نسخة مؤقتة من الأسئلة للعرض فقط (الإحصائيات وقايمة العملاء). أي تعديل/حذف/إجابة بيعتمد على getQuestions الطازجة مش على دي
+let qCache = { t: 0, list: null, p: null };
+export function invalidateQuestionsCache() { qCache = { t: 0, list: null, p: null }; }
+export function seedQuestionsCache(list) { qCache = { t: Date.now(), list, p: null }; }
+export async function getQuestionsCached(maxAgeMs = 60 * 1000) {
+  const now = Date.now();
+  if (qCache.list && now - qCache.t < maxAgeMs) return qCache.list;
+  if (qCache.p) return qCache.p;
+  const p = getQuestions().then((list) => { qCache = { t: Date.now(), list, p: null }; return list; }).catch((e) => { qCache.p = null; throw e; });
+  qCache.p = p;
+  return p;
+}
 // إحصائيات حالات الأسئلة. كل سؤال أصلي بيتعد مرة واحدة (بالـ id)، والمتابعات جوه السؤال نفسه فمش بتتعد كأسئلة.
 // الحالات الموجودة فعلاً: open (جديد) / followup_pending (متابعة بانتظار رد الإدارة) / awaiting_followup (تم الرد، بانتظار العميل)
 // / archived (مغلق) / answered (قديم، بيظهر في الأرشيف). أي سؤال بدون حالة = open (زي ما اللوحة بتتعامل معاه).

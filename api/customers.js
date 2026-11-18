@@ -28,7 +28,10 @@ const PHONE_CACHE_MS = 60 * 1000;
 const phoneDueCache = new Map();
 const phoneExistsCache = new Map();
 function trimPhoneCache(cache) { if (cache.size > 20000) cache.clear(); }
-function invalidatePhoneCache(id) { phoneDueCache.delete(String(id)); phoneExistsCache.delete(String(id)); }
+// كاش بيانات العميل للوحة (الاسم/حالة الرقم) دقيقتين، بدل 3 قراءات لكل عميل في كل تحديث
+const customerRawCache = new Map();
+const CUSTOMER_CACHE_MS = 2 * 60 * 1000;
+function invalidatePhoneCache(id) { phoneDueCache.delete(String(id)); phoneExistsCache.delete(String(id)); customerRawCache.delete(String(id)); }
 
 export function encryptPhone(chatId, phone) {
   const key = loadKey();
@@ -174,16 +177,23 @@ export async function customerMap(ids, { withPhones = false } = {}) {
   const list = [...new Set(ids.map(String).filter(validId))];
   const out = {};
   if (!list.length) return out;
-  const [infos, states, phones] = await Promise.all([
-    firestoreCommand(["HMGET", INFO, ...list]), firestoreCommand(["HMGET", PHS, ...list]), firestoreCommand(["HMGET", PH, ...list]),
-  ]);
-  list.forEach((id, i) => {
-    const info = parse(infos?.[i]) || {};
-    const hasPh = !!phones?.[i];
+  const now = Date.now();
+  const missing = list.filter((id) => { const e = customerRawCache.get(id); return !e || now - e.t >= CUSTOMER_CACHE_MS; });
+  if (missing.length) {
+    const [infos, states, phones] = await Promise.all([
+      firestoreCommand(["HMGET", INFO, ...missing]), firestoreCommand(["HMGET", PHS, ...missing]), firestoreCommand(["HMGET", PH, ...missing]),
+    ]);
+    if (customerRawCache.size > 5000) customerRawCache.clear();
+    missing.forEach((id, i) => customerRawCache.set(id, { t: now, info: infos?.[i] ?? null, state: states?.[i] ?? null, ph: phones?.[i] ?? null }));
+  }
+  list.forEach((id) => {
+    const e = customerRawCache.get(id) || {};
+    const info = parse(e.info) || {};
+    const hasPh = !!e.ph;
     out[id] = {
       chatId: id, name: info.n || "", username: info.u || "", firstSeen: info.fs || null,
-      phoneState: stateOf(states?.[i], hasPh), hasPhone: hasPh,
-      ...(withPhones && hasPh ? { phone: decryptPhone(id, phones[i]) } : {}),
+      phoneState: stateOf(e.state, hasPh), hasPhone: hasPh,
+      ...(withPhones && hasPh ? { phone: decryptPhone(id, e.ph) } : {}),
     };
   });
   return out;
@@ -192,8 +202,20 @@ export async function customerMap(ids, { withPhones = false } = {}) {
 function toObj(arr) { const o = {}; for (let i = 0; i < (arr?.length || 0); i += 2) o[arr[i]] = arr[i + 1]; return o; }
 
 // كل العملاء المعروفين: اللي ليهم سجل + أصحاب الأسئلة (حتى لو قدامى بدون سجل بعد)
+// كل صفحة/بحث/فلتر في تاب العملاء كان بيقرا الهاشات التلاتة كاملة (3 × عدد العملاء). دلوقتي بتتقرا مرة كل دقيقتين وتتشارك
+let hashesCache = { t: 0, v: null, p: null };
+async function loadCustomerHashes() {
+  const now = Date.now();
+  if (hashesCache.v && now - hashesCache.t < CUSTOMER_CACHE_MS) return hashesCache.v;
+  if (hashesCache.p) return hashesCache.p;
+  const p = Promise.all([firestoreCommand(["HGETALL", INFO]), firestoreCommand(["HGETALL", PHS]), firestoreCommand(["HGETALL", PH])])
+    .then(([infoA, phsA, phA]) => { hashesCache = { t: Date.now(), v: { infoA, phsA, phA }, p: null }; return hashesCache.v; })
+    .catch((e) => { hashesCache.p = null; throw e; });
+  hashesCache.p = p;
+  return p;
+}
 export async function listCustomers({ questions = [], filter = "all", q = "", withPhones = false } = {}) {
-  const [infoA, phsA, phA] = await Promise.all([firestoreCommand(["HGETALL", INFO]), firestoreCommand(["HGETALL", PHS]), firestoreCommand(["HGETALL", PH])]);
+  const { infoA, phsA, phA } = await loadCustomerHashes();
   const infos = toObj(infoA), states = toObj(phsA), phones = toObj(phA);
   const byId = {};
   const ensure = (id) => (byId[id] ||= { chatId: id, name: "", username: "", firstSeen: null });
