@@ -185,7 +185,8 @@
       <div class="row" style="margin-bottom:12px">
         <h2 style="margin:0">الإحصائيات</h2>
         <div class="row" style="gap:6px">
-          <button class="ghost" onclick="loadStats()">🔄 تحديث</button>
+          <span id="statsAge" class="muted" style="font-size:12px"></span>
+          <button class="ghost" onclick="loadStats(true)">🔄 تحديث</button>
           <button class="ghost" onclick="exportAll()">📥 تصدير CSV</button>
           <button class="ghost" onclick="openReport()">📄 تقرير شامل</button>
         </div>
@@ -370,9 +371,8 @@ async function login() {
     $("who").classList.remove("hidden");
     checkDraft();
     draw();
-    loadStats();
     startAutoRefresh();
-    loadQuestions();
+    loadQuestions().finally(() => loadStats());   // الأسئلة الأول: الإحصائيات بتستعمل نفس النسخة من غير قراءة تانية لقاعدة البيانات
   } catch (e) {
     creds = null;
     // نمسح الجلسة المحفوظة بس لو البيانات اترفضت فعلاً (مش عند انقطاع النت)
@@ -1123,7 +1123,9 @@ let qLimit = PAGE_SIZE, aLimit = PAGE_SIZE, lastQSig = "", lastASig = "";
 let customersCache = {};   // chatId -> بيانات العميل (الاسم/username/الرقم للأدمن فقط/حالة المشاركة)
 let qFilter = null, aFilter = null;   // فلتر الكروت: qFilter = open | followup_pending ، aFilter = closed
 let custIdx = {};   // chatId -> { n: عدد أسئلته, first: أقدم سؤال } (بيتحسب مرة واحدة بدل ما يتحسب لكل صف)
+let questionsVer = null, questionsPollCount = 0;   // رقم نسخة الأسئلة: لو ما اتغيرش السيرفر بيرد بقراءة واحدة بدل قراءة كل الأسئلة
 function setQuestionsData(r) {
+  if (typeof r.ver === "number") questionsVer = r.ver;
   customersCache = r.customers || {}; questionsCache = r.questions;
   custIdx = {};
   for (const x of r.questions) { const e = (custIdx[String(x.chatId)] ||= { n: 0, first: Infinity }); e.n++; if (x.t < e.first) e.first = x.t; }
@@ -1395,7 +1397,10 @@ async function refreshQuestionsSilently() {
   lastQRefresh = Date.now();
   try {
     const wasOn = intakeState ? intakeState.enabled : null;
-    setQuestionsData(await api("questions"));
+    // كل 5 تحديثات نقرا كل حاجة (علشان إغلاق الأسئلة المنتهية وحالة الاستقبال)، وبينهم بنسأل عن رقم النسخة بس
+    const r = await api("questions", { ver: questionsVer, full: ++questionsPollCount % 5 === 0 });
+    if (r.unchanged) return;
+    setQuestionsData(r);
     if (intakeState && wasOn !== intakeState.enabled && document.activeElement?.id !== "intakeMsg") renderIntake();
     updateBell();
     const open = !$("tab-questions").classList.contains("hidden");
@@ -2164,14 +2169,15 @@ async function openAllQuestions() {
   input.addEventListener("input", draw); draw();
 }
 
-async function loadStats() {
+async function loadStats(force = false) {
   const box = $("stats-body");
   box.innerHTML = '<div class="muted">جاري التحميل...</div>';
   try {
-    const st = await api("stats");
+    const st = await api("stats", force ? { force: true } : {});
     lastStats = st;
+    if ($("statsAge")) $("statsAge").textContent = st.generatedAt ? "آخر تحديث: " + new Date(st.generatedAt).toLocaleTimeString("ar-EG", { hour: "2-digit", minute: "2-digit" }) : "";
     if (!st.configured) {
-      box.innerHTML = '<div class="card" style="border-color:#fedf89">⚠️ الإحصائيات مش متوصلة. اربط Upstash في Vercel وعمل Redeploy.</div>';
+      box.innerHTML = '<div class="card" style="border-color:#fedf89">⚠️ الإحصائيات مش متوصلة. اربط Firebase (متغير FIREBASE_SERVICE_ACCOUNT) في Vercel وعمل Redeploy.</div>';
       return;
     }
 
