@@ -12,10 +12,43 @@ const IMGBB_API_KEY = process.env.IMGBB_API_KEY;
 const bot = new Bot(process.env.BOT_TOKEN);
 const require = createRequire(import.meta.url);
 const FALLBACK_CONTENT = require("../content.json");
+const FIRESTORE_CHECK_TIMEOUT_MS = 1_500;
 
 bot.catch((err) => {
   console.error("[telegram] update failed:", err.error?.description || err.error?.message || err.message);
 });
+
+async function withFirestoreCheckTimeout(operation, label) {
+  let timeout;
+  try {
+    return await Promise.race([
+      operation,
+      new Promise((_, reject) => {
+        timeout = setTimeout(() => reject(new Error(`${label} timed out`)), FIRESTORE_CHECK_TIMEOUT_MS);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function isBannedForUpdate(chatId) {
+  try {
+    return await withFirestoreCheckTimeout(isBanned(chatId), "ban check");
+  } catch (e) {
+    console.error("[access] ban check failed; continuing:", e?.message || e);
+    return false;
+  }
+}
+
+async function hasPhoneForUpdate(chatId) {
+  try {
+    return await withFirestoreCheckTimeout(hasPhone(chatId), "phone check");
+  } catch (e) {
+    console.error("[phone] lookup failed; showing optional button:", e?.message || e);
+    return false;
+  }
+}
 
 async function safeAnswerCallbackQuery(ctx, options) {
   try {
@@ -280,7 +313,7 @@ function render(node, path, hidePhoneBtn = false) {
 async function renderFor(ctx, node, path) {
   let hide = false;
   if (path === "" && phoneFeatureEnabled() && ctx.chat?.id) {
-    if (ctx._phoneShared === undefined) ctx._phoneShared = await hasPhone(ctx.chat.id).catch(() => false);
+    if (ctx._phoneShared === undefined) ctx._phoneShared = await hasPhoneForUpdate(ctx.chat.id);
     hide = ctx._phoneShared;
   }
   return render(node, path, hide);
@@ -347,11 +380,11 @@ bot.on("message:contact", async (ctx) => {
 // زرار القايمة الرئيسية: مشاركة الرقم لاحقاً
 bot.callbackQuery("sharephone", async (ctx) => {
   await safeAnswerCallbackQuery(ctx);
-  try { if (await isBanned(ctx.chat.id)) return; } catch {}
+  if (await isBannedForUpdate(ctx.chat.id)) return;
   if (!phoneFeatureEnabled() || ctx.chat?.type !== "private") return;
   const m = (await getContent().catch(() => ({}))).messages || {};
   try { await claimPhonePrompt(ctx.chat.id); } catch {}   // علشان الطلب التلقائي ما يظهرش بعد كده
-  if (await hasPhone(ctx.chat.id).catch(() => false)) return ctx.reply(toHtml(m.phoneAlready || DEFAULT_PHONE_ALREADY), HTML_OPTS((await renderFor(ctx, await getContent(), "")).markup));
+  if (await hasPhoneForUpdate(ctx.chat.id)) return ctx.reply(toHtml(m.phoneAlready || DEFAULT_PHONE_ALREADY), HTML_OPTS((await renderFor(ctx, await getContent(), "")).markup));
   return sendPhonePrompt(ctx, m);
 });
 
@@ -378,14 +411,14 @@ bot.command("notify", async (ctx) => {
 });
 
 bot.command("start", async (ctx) => {
-  try { if (await isBanned(ctx.chat.id)) return; } catch {}
+  if (await isBannedForUpdate(ctx.chat.id)) return;
   const { text, markup } = await renderFor(ctx, await getContent(), "");
   await ctx.reply(toHtml(text), HTML_OPTS(markup));
   await maybePromptPhone(ctx);
 });
 
 async function showNode(ctx, path, track) {
-  try { if (await isBanned(ctx.chat.id)) { await safeAnswerCallbackQuery(ctx); return; } } catch {}
+  if (await isBannedForUpdate(ctx.chat.id)) { await safeAnswerCallbackQuery(ctx); return; }
   try {
     const node = getNode(await getContent(), path);
     const { text, markup } = await renderFor(ctx, node, path);
@@ -489,7 +522,7 @@ bot.callbackQuery("pq", async (ctx) => {
 bot.callbackQuery(/^ask:(.*)$/, async (ctx) => {
   const path = ctx.match[1];
   try {
-    try { if (await isBanned(ctx.chat.id)) { await safeAnswerCallbackQuery(ctx); return; } } catch {}
+    if (await isBannedForUpdate(ctx.chat.id)) { await safeAnswerCallbackQuery(ctx); return; }
     const content = await getContent();
     const node = getNode(content, path);
     await safeAnswerCallbackQuery(ctx);
@@ -499,7 +532,7 @@ bot.callbackQuery(/^ask:(.*)$/, async (ctx) => {
     }
     let left = null;
     try {
-      left = await questionsLeft(ctx.chat.id);
+      left = await withFirestoreCheckTimeout(questionsLeft(ctx.chat.id), "question limit check");
     } catch (e) {
       console.error("[questions] limit check failed; allowing question prompt:", e?.message || e);
     }
