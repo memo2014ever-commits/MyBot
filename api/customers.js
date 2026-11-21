@@ -215,12 +215,24 @@ async function loadCustomerHashes() {
   hashesCache.p = p;
   return p;
 }
-export async function listCustomers({ questions = [], filter = "all", q = "", withPhones = false } = {}) {
+
+export async function listCustomers({
+  questions = [],
+  filter = "all",
+  q = "",
+  withPhones = false,
+  page = 1,
+  pageSize = 25,
+  paginate = false,
+} = {}) {
   const { infoA, phsA } = await loadCustomerHashes();
   const infos = toObj(infoA), states = toObj(phsA);
   const byId = {};
   const ensure = (id) => (byId[id] ||= { chatId: id, name: "", username: "", firstSeen: null });
-  Object.keys(infos).forEach((id) => { const i = parse(infos[id]) || {}; Object.assign(ensure(id), { name: i.n || "", username: i.u || "", firstSeen: i.fs || null }); });
+  Object.keys(infos).forEach((id) => {
+    const i = parse(infos[id]) || {};
+    Object.assign(ensure(id), { name: i.n || "", username: i.u || "", firstSeen: i.fs || null });
+  });
   Object.keys(states).forEach(ensure);
   questions.forEach((x) => {
     if (!validId(x.chatId)) return;
@@ -244,7 +256,21 @@ export async function listCustomers({ questions = [], filter = "all", q = "", wi
     });
   }
   rows.sort((a, b) => (b.firstSeen || 0) - (a.firstSeen || 0));
-  return rows;
+
+  if (!paginate) return rows;
+
+  const size = Math.max(1, Math.min(200, Number(pageSize) || 25));
+  const total = rows.length;
+  const pages = Math.max(1, Math.ceil(total / size));
+  const safePage = Math.max(1, Math.min(pages, Number(page) || 1));
+  const start = (safePage - 1) * size;
+  return {
+    customers: rows.slice(start, start + size),
+    total,
+    page: safePage,
+    pageSize: size,
+    pages,
+  };
 }
 
 export async function customerDetail(chatId, { withPhones = false } = {}) {
