@@ -338,8 +338,8 @@ const sendPhonePrompt = (ctx, m = {}) => ctx.reply(toHtml(m.phonePrompt || DEFAU
 async function maybePromptPhone(ctx) {
   try {
     if (!phoneFeatureEnabled() || ctx.chat?.type !== "private" || !ctx.from) return;
-    if (!(await phonePromptDue(ctx.chat.id))) return;
-    if (await isBanned(ctx.chat.id)) return;
+    if (!(await withFirestoreCheckTimeout(phonePromptDue(ctx.chat.id), "phone prompt check"))) return;
+    if (await withFirestoreCheckTimeout(isBanned(ctx.chat.id), "ban check")) return;
     const m = (await getContent().catch(() => ({}))).messages || {};
     await sendPhonePrompt(ctx, m);
   } catch (e) { console.error("[phone] prompt failed:", e?.message); }
