@@ -497,7 +497,13 @@ bot.callbackQuery(/^ask:(.*)$/, async (ctx) => {
     if (!intake.enabled) {   // الزرار ظاهر، لكن بنعتذر بدل ما نفتح خانة السؤال
       return ctx.reply(toHtml(intake.message || DEFAULT_INTAKE_MESSAGE), HTML_OPTS((await renderFor(ctx, content, "")).markup));
     }
-    if ((await questionsLeft(ctx.chat.id)) <= 0) {
+    let left = null;
+    try {
+      left = await questionsLeft(ctx.chat.id);
+    } catch (e) {
+      console.error("[questions] limit check failed; allowing question prompt:", e?.message || e);
+    }
+    if (left !== null && left <= 0) {
       const lm = content.messages?.limitReached || DEFAULT_LIMIT;
       return ctx.reply(fill(lm, { max: MAX_QUESTIONS_COUNT }), HTML_OPTS((await renderFor(ctx, content, "")).markup));
     }
