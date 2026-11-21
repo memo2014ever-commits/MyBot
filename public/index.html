@@ -1381,7 +1381,13 @@ function refreshOnReturn() {
   if (!autoTimer) startAutoRefresh();
   if (Date.now() - lastQRefresh > 3000) refreshQuestionsSilently();
 }
-document.addEventListener("visibilitychange", refreshOnReturn);
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) {
+    if (autoTimer) { clearInterval(autoTimer); autoTimer = null; }
+  } else {
+    refreshOnReturn();
+  }
+});
 window.addEventListener("focus", refreshOnReturn);
 window.addEventListener("online", refreshOnReturn);
 function noteDashboardActivity() {
@@ -1397,8 +1403,8 @@ async function refreshQuestionsSilently() {
   lastQRefresh = Date.now();
   try {
     const wasOn = intakeState ? intakeState.enabled : null;
-    // كل 5 تحديثات نقرا كل حاجة (علشان إغلاق الأسئلة المنتهية وحالة الاستقبال)، وبينهم بنسأل عن رقم النسخة بس
-    const r = await api("questions", { ver: questionsVer, full: ++questionsPollCount % 5 === 0 });
+    // الاعتماد الدائم على رقم النسخة ver لتوفير القراءات (قراءة واحدة فقط عند عدم وجود تعديل)
+    const r = await api("questions", { ver: questionsVer, full: false });
     if (r.unchanged) return;
     setQuestionsData(r);
     if (intakeState && wasOn !== intakeState.enabled && document.activeElement?.id !== "intakeMsg") renderIntake();
