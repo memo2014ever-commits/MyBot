@@ -92,6 +92,7 @@
   .toolbar { display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-bottom:12px; }
   .toolbar input { max-width:320px; }
   .node { border:1px solid var(--line); border-radius:12px; padding:12px; margin:10px 0; background:var(--card); transition:box-shadow .15s; }
+  /* ألوان مميزة لكل مستوى عشان ما يبقاش في بعض */
   .node.lvl-0 { border:2px solid #2e6be6; background:#f3f7ff; border-right:8px solid #2e6be6; }
   .node.lvl-1 { border:1px solid #12b76a; background:#f0fdf6; border-right:6px solid #12b76a; }
   .node.lvl-2 { border:1px solid #7a5af8; background:#f6f3ff; border-right:6px solid #7a5af8; }
@@ -296,6 +297,7 @@ let creds = null, data = null, role = "admin", dirty = false, draftTimer = null,
 
 const $ = (id) => document.getElementById(id);
 
+// ---------- أدوات عامة ----------
 function toast(msg, type = "") {
   const el = document.createElement("div");
   el.className = "toast " + type;
@@ -342,6 +344,7 @@ function setStatus(text, cls = "") {
   el.className = "status " + cls;
 }
 
+// ---------- الوضع الداكن ----------
 function applyTheme(t) {
   document.documentElement.dataset.theme = t;
   localStorage.setItem("legan-theme", t);
@@ -352,6 +355,7 @@ function toggleTheme() {
 }
 applyTheme(localStorage.getItem("legan-theme") || "light");
 
+// ---------- الدخول والخروج ----------
 const SESSION_KEY = "legan-session";
 async function login() {
   creds = { username: $("u").value, password: $("p").value };
@@ -368,14 +372,15 @@ async function login() {
     checkDraft();
     draw();
     startAutoRefresh();
-    loadQuestions().finally(() => loadStats());
+    loadQuestions().finally(() => loadStats());   // الأسئلة الأول: الإحصائيات بتستعمل نفس النسخة من غير قراءة تانية لقاعدة البيانات
   } catch (e) {
     creds = null;
+    // نمسح الجلسة المحفوظة بس لو البيانات اترفضت فعلاً (مش عند انقطاع النت)
     if (e.status === 401 || e.status === 403) { try { sessionStorage.removeItem(SESSION_KEY); } catch {} }
     $("loginMsg").textContent = e.message;
   }
 }
-
+// ريفرش أو رجوع للتاب: ندخل تلقائياً بالجلسة المحفوظة بدل ما نطلب الدخول من الأول
 async function autoLogin() {
   let saved = null;
   try { saved = JSON.parse(sessionStorage.getItem(SESSION_KEY) || "null"); } catch {}
@@ -391,6 +396,7 @@ function logout() {
   location.reload();
 }
 
+// ---------- المسودة التلقائية ----------
 function markDirty() {
   dirty = true;
   setStatus("● تعديلات غير محفوظة", "warn");
@@ -420,18 +426,20 @@ function dropDraft() {
   $("draftBanner").classList.add("hidden");
 }
 
+// ---------- التنقل ----------
 function showTab(name) {
   document.querySelectorAll(".tab").forEach((b) => b.classList.toggle("active", b.dataset.tab === name));
   ["stats", "menu", "questions", "archive", "history", "bans"].forEach((t) => $("tab-" + t).classList.toggle("hidden", t !== name));
   if (name === "stats") loadStats();
   if (name === "questions" || name === "archive") {
-    if (questionsCache.length) { renderQuestions(); renderArchive(); }
+    if (questionsCache.length) { renderQuestions(); renderArchive(); }   // نعرض اللي عندنا فوراً، وبعدين نحدّث
     loadQuestions();
   }
   if (name === "history") loadHistory();
   if (name === "bans") loadBans();
 }
 
+// ---------- الشجرة: مسارات وأسماء ----------
 function pathLabel(p) {
   if (p === "home") return "🏠 القايمة الرئيسية";
   let node = data;
@@ -471,7 +479,8 @@ function matches(n, q) {
   return (n.label || "").includes(q) || (n.text || "").includes(q) || (n.items || []).some((c) => matches(c, q));
 }
 
-let currentPath = "";
+// ---------- عرض الشجرة ----------
+let currentPath = "";   // المسار اللي المحرر واقف عليه (فارغ = القايمة الرئيسية)
 
 function getNodeByPath(p) {
   let n = data;
@@ -487,9 +496,11 @@ function parentPath(p) {
   return p.includes(".") ? p.slice(0, p.lastIndexOf(".")) : "";
 }
 
+// نافذة رسايل النظام: كل قسم بيوضح إمتى بيظهر
 function openSystemMessages() {
   if (!data.messages) data.messages = {};
   const m = data.messages;
+  // كل خانة: [المفتاح، العنوان، شرح إمتى بتظهر، الافتراضي]
   const sections = [
     ["🧾 الاستعلام عن الحجز", "بيظهر لما العميل يكتب كلام فيه استعلام عن موعده أو حجزه", [
       ["inquiry", "📝 نص الرسالة", "الرسالة اللي بتظهر للعميل", "للاستعلام عن موعدك أو حجزك، ادخل على بوت الحجز مباشرة 👇"],
@@ -616,10 +627,12 @@ function navBar() {
   wrap.style.cssText = "padding:12px";
 
   const parts = currentPath === "" ? [] : currentPath.split(".");
+
+  // سلسلة قوايم منسدلة: كل قايمة بتفتح اللي بعدها
   const chain = document.createElement("div");
   chain.style.cssText = "display:flex;flex-wrap:wrap;gap:10px;align-items:center";
 
-  const levels = parts.length + 1;
+  const levels = parts.length + 1;   // مستوى الجذر + كل مستوى مختار
   for (let k = 0; k < levels; k++) {
     const prefix = parts.slice(0, k).join(".");
     const node = getNodeByPath(prefix);
@@ -691,7 +704,7 @@ function draw() {
 
 function onSearch(v) { query = v; draw(); }
 
-const openSet = new WeakSet();
+const openSet = new WeakSet();   // حالة الفتح/القفل بس، مش بتتحفظ في الملف
 function isOpen(node, depth) {
   return depth === 0 || !!query.trim() || openSet.has(node) || node === getNodeByPath(currentPath);
 }
@@ -718,7 +731,7 @@ function renderNode(node, parent, depth, index) {
   if (hasKids) {
     title.style.cursor = "pointer";
     title.textContent = (isOpen(node, depth) ? "▾ " : "▸ ") + title.textContent;
-    title.onclick = () => { toggleOpen(node); };
+    title.onclick = () => { if (!isRoot) toggleOpen(node); else toggleOpen(node); };
   }
   head.appendChild(title);
   if (!isRoot) {
@@ -778,6 +791,8 @@ function renderNode(node, parent, depth, index) {
   updCount();
   if (!isAsk) wrap.append(ta, counter);
 
+  // سحب وإفلات (ديسكتوب)
+  // السحب من العنوان بس (مش من الكارت كله) عشان تحديد النص داخل الخانات يشتغل عادي
   if (!isRoot) {
     head.draggable = true;
     head.addEventListener("dragstart", (e) => { e.stopPropagation(); window._drag = node; wrap.classList.add("dragging"); });
@@ -805,6 +820,7 @@ function renderNode(node, parent, depth, index) {
     draw();
   });
 
+  // أزرار التحكم
   const actions = document.createElement("div");
   actions.className = "actions";
 
@@ -918,6 +934,7 @@ function discard() {
   });
 }
 
+// ---------- الحفظ ----------
 function findIssues() {
   const out = [];
   allNodes().forEach(({ path, node }) => {
@@ -948,6 +965,7 @@ async function save() {
   }
 }
 
+// ---------- المعاينة ----------
 function previewNode(node) {
   const kids = (node.items || []).map((c) => `<div>${esc(c.label || "")}</div>`).join("");
   modal(`
@@ -966,6 +984,8 @@ function esc(s) {
   return String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 }
 
+// ---------- الإحصائيات ----------
+// اسم الزرار من المفتاح المحفوظ: لو الزرار اتغير أو اتحذف بنضيف تنبيه
 function statLabel(key) {
   const [p, l] = key.split("|");
   if (!l) return pathLabel(p);
@@ -983,6 +1003,8 @@ function exportHours() {
   excelDownload(`أوقات_الذروة_${lastHoursDate || "الإجمالي"}.xls`, [["الساعة", "الضغطات"], ...Array.from({ length: 24 }, (_, h) => [`${h}:00`, Number(hrs[h] || 0)])]);
 }
 
+// تجميع الضغطات باسم الزرار بدل مكانه (عشان الأرقام ما تضيعش لو الزراير اتحركت)
+// الزراير اللي اسمها مش موجود في القايمة خالص (محذوفة) ما بتظهرش
 function labelUsage(obj) {
   const names = new Set(allNodes().map(({ node }) => node.label));
   const out = {};
@@ -999,8 +1021,8 @@ function currentUsed(st) {
 }
 
 function csvDownload(fileName, rows) {
-  const escCsv = (v) => `"${String(v ?? "").replace(/"/g, '""')}"`;
-  const csv = "\uFEFF" + rows.map((r) => r.map(escCsv).join(",")).join("\r\n");
+  const esc = (v) => `"${String(v ?? "").replace(/"/g, '""')}"`;
+  const csv = "\uFEFF" + rows.map((r) => r.map(esc).join(",")).join("\r\n");
   const a = document.createElement("a");
   a.href = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
   a.download = fileName;
@@ -1008,9 +1030,10 @@ function csvDownload(fileName, rows) {
   setTimeout(() => URL.revokeObjectURL(a.href), 1000);
 }
 
+// ملف Excel بصيغة HTML متوافقة مع Excel، بدون مكتبة خارجية أو فقدان النص العربي.
 function excelDownload(fileName, rows) {
   const cell = (v) => `<td style="mso-number-format:'\@';">${esc(v)}</td>`;
-  const html = `<!DOCTYPE html><html dir="rtl"><head><meta charset="utf-8"></head><body><table>${rows.map((r) => `<tr>${r.map(cell).join("")}</tr>`).join("")}</table></body></html>`;
+  const html = `<!DOCTYPE html><html dir="rtl"><head><meta charset="utf-8"></head><body><table>${rows.map((r, i) => `<tr>${r.map(cell).join("")}</tr>`).join("")}</table></body></html>`;
   const a = document.createElement("a");
   a.href = URL.createObjectURL(new Blob(["\uFEFF", html], { type: "application/vnd.ms-excel;charset=utf-8" }));
   a.download = fileName.endsWith(".xls") ? fileName : `${fileName}.xls`;
@@ -1086,25 +1109,27 @@ function openReport() {
   w.document.close();
 }
 
+function esc(v) {
+  return String(v ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+}
+
 // ---------- الأسئلة ----------
 let questionsCache = [];
-let extrasCache = {}, defaultFuLimit = 3;
-const fuLimit = (chatId) => defaultFuLimit + (Number(extrasCache[String(chatId)]) || 0);
-const fuLimitQ = (x) => fuLimit(x.chatId) + (Number(x.extraFollowups) || 0);
-const PAGE_SIZE = 50;
+let extrasCache = {}, defaultFuLimit = 3;   // زيادات حد المتابعات لكل عميل (من السيرفر)
+const fuLimit = (chatId) => defaultFuLimit + (Number(extrasCache[String(chatId)]) || 0);   // الإضافي الدائم القديم فقط
+const fuLimitQ = (x) => fuLimit(x.chatId) + (Number(x.extraFollowups) || 0);   // حد سؤال معيّن = الافتراضي + الدائم القديم + زيادة السؤال
+const PAGE_SIZE = 50;   // نرسم 50 صف بس في المرة (الباقي بزرار "عرض المزيد") علشان الصفحة ما تتقلش
 let qLimit = PAGE_SIZE, aLimit = PAGE_SIZE, lastQSig = "", lastASig = "";
-let customersCache = {};
-let qFilter = null, aFilter = null;
-let custIdx = {};
-let questionsVer = null;
-
+let customersCache = {};   // chatId -> بيانات العميل (الاسم/username/الرقم للأدمن فقط/حالة المشاركة)
+let qFilter = null, aFilter = null;   // فلتر الكروت: qFilter = open | followup_pending ، aFilter = closed
+let custIdx = {};   // chatId -> { n: عدد أسئلته, first: أقدم سؤال } (بيتحسب مرة واحدة بدل ما يتحسب لكل صف)
+let questionsVer = null, questionsPollCount = 0;   // رقم نسخة الأسئلة: لو ما اتغيرش السيرفر بيرد بقراءة واحدة بدل قراءة كل الأسئلة
 function setQuestionsData(r) {
   if (typeof r.ver === "number") questionsVer = r.ver;
   customersCache = r.customers || {}; questionsCache = r.questions;
   custIdx = {};
   for (const x of r.questions) { const e = (custIdx[String(x.chatId)] ||= { n: 0, first: Infinity }); e.n++; if (x.t < e.first) e.first = x.t; }
-  if (r.intake) intakeState = r.intake; extrasCache = r.extras || {}; defaultFuLimit = r.defaultFollowupLimit || 10; updateQuestionCards();
-}
+  if (r.intake) intakeState = r.intake; extrasCache = r.extras || {}; defaultFuLimit = r.defaultFollowupLimit || 10; updateQuestionCards(); }
 function normQ(q) { return q.trim().replace(/\s+/g, " ").toLowerCase(); }
 function customerQuestions(chatId) {
   return chatId ? questionsCache.filter((x) => x.chatId === chatId) : [];
@@ -1116,11 +1141,12 @@ function answerEntries(x) {
 
 const limitBtn = (chatId) => `<button class="ghost" style="margin-bottom:6px" title="زيادة حد المتابعات لهذا العميل" onclick='openLimitDialog(${JSON.stringify(String(chatId))})'>➕ متابعات</button>`;
 
+// نافذة إدارة حد المتابعات لعميل (أدمن فقط؛ السيرفر بيتحقق من الصلاحية برضه)
 async function openLimitDialog(chatId) {
   let info;
   try { info = await api("followupLimitInfo", { ref: String(chatId) }); }
   catch (e) { return toast(e.message, "bad"); }
-  const requestId = crypto.randomUUID();
+  const requestId = crypto.randomUUID();   // يمنع تنفيذ نفس الطلب مرتين
   const bg = document.createElement("div");
   bg.className = "modal-bg";
   const OP = { add: "➕ زيادة", sub: "➖ نقص", clear: "🗑 حذف زيادة السؤال", clearPermanent: "🗑 حذف الإضافي الدائم" };
@@ -1154,10 +1180,10 @@ async function openLimitDialog(chatId) {
   </div>`;
   document.body.appendChild(bg);
   const input = bg.querySelector("#lim-amount"), err = bg.querySelector("#lim-err");
-  const parseLim = () => { const v = input.value.trim(); return /^\d+$/.test(v) && +v >= 1 && +v <= 100 ? +v : null; };
+  const parse = () => { const v = input.value.trim(); return /^\d+$/.test(v) && +v >= 1 && +v <= 100 ? +v : null; };
   const badMsg = "أدخل رقم صحيح من 1 إلى 100 (بدون صفر أو سالب أو كسور)";
   input.addEventListener("input", () => {
-    const n = parseLim();
+    const n = parse();
     err.textContent = input.value.trim() && n === null ? badMsg : "";
     bg.querySelector("#lim-preview").textContent = n === null ? "" : `بعد الزيادة: ${info.totalLimit + n}${info.questionExtra >= n ? ` · بعد النقص: ${info.totalLimit - n}` : ""}`;
   });
@@ -1166,7 +1192,7 @@ async function openLimitDialog(chatId) {
   bg.addEventListener("click", (e) => { if (e.target === bg) close(); });
   const run = async (op, needAmount, confirmText) => {
     let amount;
-    if (needAmount) { amount = parseLim(); if (amount === null) { err.textContent = badMsg; return; } }
+    if (needAmount) { amount = parse(); if (amount === null) { err.textContent = badMsg; return; } }
     if (confirmText && !confirm(confirmText)) return;
     bg.querySelectorAll("button").forEach((b) => (b.disabled = true));
     try {
@@ -1199,6 +1225,8 @@ function showCustomerHistory(chatId) {
     <div class="row" style="margin-top:14px"><button class="ghost" data-r="0">إغلاق</button></div>`);
 }
 
+
+// ---------- الإجابات السريعة ----------
 function renderQuickList() {
   if (!data) return;
   const list = Array.isArray(data.quickReplies) ? data.quickReplies : [];
@@ -1215,6 +1243,8 @@ function renderQuickList() {
     </div>`).join("");
 }
 
+
+// نافذة إدارة الإجابات السريعة (بتتفتح من صفحة الأسئلة)
 function openQuickManager() {
   if (!data) return;
   const bg = document.createElement("div");
@@ -1272,6 +1302,7 @@ async function deleteQuick(index) {
   renderQuickList();
 }
 
+// زرار ⚡ جنب كل خانة إجابة: يفتح القايمة ويحط النص في الخانة (من غير إرسال)
 function openQuick(targetId) {
   const list = Array.isArray(data.quickReplies) ? data.quickReplies : [];
   if (!list.length) return toast("مفيش إجابات سريعة. ضيفها من تبويب الأسئلة", "bad");
@@ -1316,6 +1347,7 @@ function addQuickButtons() {
 }
 new MutationObserver(() => addQuickButtons()).observe(document.body, { childList: true, subtree: true });
 
+// ---------- الجرس ----------
 function updateBell() {
   const btn = $("bellBtn");
   if (!btn) return;
@@ -1326,6 +1358,7 @@ function updateBell() {
 }
 function openQuestionsFromBell() { showTab("questions"); }
 
+// ---------- التحديث التلقائي للأسئلة: كل دقيقة، ويتوقف بعد 5 دقائق خمول ----------
 let autoTimer = null;
 const AUTO_REFRESH_MS = 60 * 1000;
 const DASHBOARD_IDLE_MS = 5 * 60 * 1000;
@@ -1340,6 +1373,7 @@ function startAutoRefresh() {
     refreshQuestionsSilently();
   }, AUTO_REFRESH_MS);
 }
+// أول ما ترجع للتاب (بعد ما كان في الخلفية) نحدّث فوراً، لأن المتصفح بيوقف المؤقتات في التابات المخفية
 let lastQRefresh = 0;
 function refreshOnReturn() {
   if (!creds || document.hidden) return;
@@ -1369,12 +1403,14 @@ async function refreshQuestionsSilently() {
   lastQRefresh = Date.now();
   try {
     const wasOn = intakeState ? intakeState.enabled : null;
+    // الاعتماد الدائم على رقم النسخة ver لتوفير القراءات (قراءة واحدة فقط عند عدم وجود تعديل)
     const r = await api("questions", { ver: questionsVer, full: false });
     if (r.unchanged) return;
     setQuestionsData(r);
     if (intakeState && wasOn !== intakeState.enabled && document.activeElement?.id !== "intakeMsg") renderIntake();
     updateBell();
     const open = !$("tab-questions").classList.contains("hidden");
+    // ما نرسمش من جديد لو فيه رد مكتوب ولسه ما اتبعتش
     const typing = [...document.querySelectorAll('textarea[id^="answer-"], textarea[id^="archive-answer-"]')]
       .some((t) => t.value.trim() && t.offsetParent);
     if (open && !typing) { renderQuestions(); renderArchive(); }
@@ -1393,6 +1429,7 @@ async function loadQuestions() {
   } catch (e) { toast(e.message, "bad"); }
 }
 
+// ---------- بيانات العميل بجوار الأسئلة ----------
 const PHONE_STATE_LABEL = {
   phone_shared: "✅ شارك رقمه",
   phone_skipped: "⏭️ اختار الاستمرار بدون مشاركة",
@@ -1414,6 +1451,7 @@ function custInfoHtml(x) {
   return `<b>${esc(name)}</b>${uname ? ` <span class="muted" dir="ltr">@${esc(uname)}</span>` : ""}
     <div class="cinfo">📱 ${phone}${id ? `<br>🆔 <span dir="ltr">${esc(id)}</span> <span style="opacity:.7">(Telegram User ID / Chat ID)</span>` : ""}${first ? `<br>🗓 أول تفاعل مسجل: ${esc(fmtTime(first))}` : ""}</div>`;
 }
+// البحث بالاسم / Username / Telegram ID / رقم الهاتف (الرقم متاح للأدمن فقط لأن السيرفر هو اللي بيبعته)
 function custSearchMatch(x, raw) {
   const q = String(raw || "").trim().toLowerCase().replace(/^@/, "");
   if (!q) return true;
@@ -1431,8 +1469,10 @@ function clearAFilter() { aFilter = null; renderArchive(); }
 function goQuestions(f) { qFilter = f; showTab("questions"); }
 function goArchive(f) { aFilter = f; showTab("archive"); }
 
+// ---------- مفتاح استقبال الأسئلة الجديدة ----------
 let intakeState = null;
-let intakeOpen = false;
+async function loadIntake() { try { intakeState = await api("getIntake"); } catch {} renderIntake(); }
+let intakeOpen = false;   // الكارت مطوي افتراضياً (بيظهر منه العنوان والحالة والمفتاح بس)
 try { intakeOpen = sessionStorage.getItem("intake-open") === "1"; } catch {}
 function toggleIntakePanel() {
   intakeOpen = !intakeOpen;
@@ -1478,6 +1518,7 @@ async function saveIntakeMessage() {
   renderIntake();
 }
 
+// ---------- تنبيهات الموظفين على تيليجرام (أدمن فقط) ----------
 let notifyState = null, notifyOpen = false, notifyCode = null, notifyPollTimer = null, NOTIFY_POLL_MS = 60000;
 try { notifyOpen = sessionStorage.getItem("notify-open") === "1"; } catch {}
 const NF_TYPE = { private: "خاص", group: "جروب", supergroup: "جروب", channel: "قناة" };
@@ -1614,7 +1655,7 @@ async function notifyTest() {
     const r = await api("notifyTest");
     toast(r.failed ? `اتبعت لـ ${r.sent} وفشل لـ ${r.failed} (التفاصيل تحت المحادثة)` : `اتبعت التنبيه التجريبي لـ ${r.sent} محادثة ✅`, r.failed ? "bad" : "ok");
     const st = await api("notifyGet"); notifyState = st; renderNotifyChats();
-    const l = $("nf-last"); if (l && st.last) l.textContent = `آخر إرسال: ${esc(fmtTime(st.last.t))} · ${st.last.failed ? `فشل لـ ${st.last.failed} محادثة` : "نجح"}`;
+    const l = $("nf-last"); if (l && st.last) l.textContent = `آخر إرسال: ${fmtTime(st.last.t)} · ${st.last.failed ? `فشل لـ ${st.last.failed} محادثة` : "نجح"}`;
   } catch (e) { toast(e.message, "bad"); }
 }
 
@@ -1623,7 +1664,7 @@ function moreRow(total, shown, action) {
   return `<tr><td colspan="9" style="text-align:center"><button class="ghost" onclick="${action}">⬇️ عرض ${Math.min(PAGE_SIZE, total - shown)} إضافية (معروض ${shown} من ${total})</button></td></tr>`;
 }
 function renderQuestions() {
-  updateBell(); updateQuestionCards();
+  updateBell(); updateQuestionCards();   // الجرس والكروت يتحدّثوا فوراً بعد أي رد/إغلاق/حذف (من غير تبديل التاب)
   const t = $("qTable");
   const q = ($("qSearch").value || "").trim();
   const counts = {};
@@ -1633,7 +1674,7 @@ function renderQuestions() {
   filterChip("qFilterChip", qFilter === "open" ? "فلتر: الأسئلة الجديدة" : qFilter === "followup_pending" ? "فلتر: تحتاج متابعة" : "", "clearQFilter");
   if (!rows.length) { t.innerHTML = '<tr><td class="muted">' + (qFilter || q ? "مفيش أسئلة مطابقة للفلتر الحالي" : "مفيش أسئلة بعد") + '</td></tr>'; return; }
   const qSig = JSON.stringify([q, qFilter]);
-  if (qSig !== lastQSig) { qLimit = PAGE_SIZE; lastQSig = qSig; }
+  if (qSig !== lastQSig) { qLimit = PAGE_SIZE; lastQSig = qSig; }   // فلتر/بحث جديد: نبدأ من أول صفحة
   const qShown = rows.slice(0, qLimit);
   t.innerHTML = `<tr><th>العميل</th><th>السؤال</th><th>عدد مرات</th><th>الوقت</th><th>الإجابة</th><th></th></tr>` + qShown.map((x) => `
     <tr>
@@ -1695,7 +1736,7 @@ function showFollowup(id) {
     <div class="card" style="padding:10px;margin-bottom:8px">${custInfoHtml(item)}</div>
     <div style="max-height:62vh;overflow:auto">${threadHtml(item, { highlightLast: true })}</div>
     <div class="row" style="margin-top:12px"><button class="ghost" data-r="0">إغلاق</button></div>`);
-  const hl = [...document.querySelectorAll(".tl-hl")].at(-1);
+  const hl = [...document.querySelectorAll(".tl-hl")].at(-1);   // ننزل عند آخر متابعة جديدة
   if (hl && hl.scrollIntoView) hl.scrollIntoView({ block: "nearest" });
 }
 
@@ -1721,11 +1762,13 @@ function shortText(text, max = 90) {
   return s.length > max ? s.slice(0, max) + "…" : s;
 }
 
+// ---------- المحادثة بترتيب زمني: سؤال ← إجابته ← متابعة ← إجابتها ... ----------
 function threadEvents(item) {
   const ev = [{ kind: "q", t: item.t || 0, text: item.q, attachments: item.attachments || [], ord: 0 }];
   answerEntries(item).forEach((a, i) => ev.push({ kind: "a", t: a.t || 0, text: a.text || "", idx: i, ord: 1 }));
   (item.followups || []).forEach((f, i) => ev.push({ kind: "f", t: f.t || 0, text: f.text || "", attachments: f.attachments || [], n: i + 1, ord: 2 }));
   const sorted = ev.map((e, seq) => ({ ...e, seq })).sort((a, b) => a.t - b.t || a.ord - b.ord || a.seq - b.seq);
+  // كل رد بياخد اسم اللي بيرد عليه (السؤال أو المتابعة رقم كذا) بدل رقم عام، علشان ما يحصلش لخبطة
   let target = { label: "السؤال", count: 0 };
   for (const e of sorted) {
     if (e.kind === "q") target = { label: "السؤال", count: 0 };
@@ -1754,6 +1797,7 @@ function threadHtml(item, { highlightLast = false } = {}) {
     return `<div class="card tl tl-f${hl ? " tl-hl" : ""}" style="margin:7px 0;padding:9px;border-right:3px solid var(--accent)${hl ? ";background:#fffaeb" : ""}"><b>📩 متابعة ${e.n}</b>${hl ? ' <span class="status warn">جديدة بانتظار الرد</span>' : ""}<br><span style="white-space:pre-wrap">${esc(e.text)}</span>${imgsHtml(e.attachments)}${time}</div>`;
   }).join("");
 }
+// متابعة جديدة بانتظار الرد: الإجابة الأصلية اتبعتت خلاص، فالصف في الجدول يعرض المتابعة نفسها
 function pendingFollowup(x) { return x.status === "followup_pending" && (x.followups || []).length ? x.followups.at(-1) : null; }
 function qCellHtml(x) {
   const f = pendingFollowup(x);
@@ -1934,19 +1978,22 @@ async function loadHoursForDate(date) {
   } catch (e) { toast(e.message, "bad"); }
 }
 
-function calcQStats(list) {
+// ---------- كروت الإحصائيات (عملاء + أسئلة) ----------
+function calcQStats(list) {   // نفس منطق السيرفر (computeQuestionStats): كل سؤال أصلي مرة، والمتابعات مش بتتعد
   const seen = new Set(), c = { total: 0, open: 0, fu: 0, wait: 0, closed: 0, legacy: 0, ct: 0, cx: 0, cm: 0 };
   for (const x of list) {
     const k = x.id || x.raw; if (k) { if (seen.has(k)) continue; seen.add(k); }
     c.total++;
     const st = x.status || "open";
     if (st === "open") c.open++; else if (st === "followup_pending") c.fu++; else if (st === "awaiting_followup") c.wait++;
-    else if (st === "archived") { c.closed++; const kind = closeKind(x); if (kind === "timeout") c.ct++; else if (kind === "max_followups") c.cx++; else c.cm++; }
+    else if (st === "archived") { c.closed++; const k = closeKind(x); if (k === "timeout") c.ct++; else if (k === "max_followups") c.cx++; else c.cm++; }
     else if (st === "answered") c.legacy++;
   }
   return c;
 }
+// سبب إغلاق السؤال: انتهت المهلة / وصل للحد / يدوي (والقديم اللي مالوش سبب مسجّل بيتحسب يدوي)
 function closeKind(x) { return x.closeReason === "timeout" ? "timeout" : x.closeReason === "max_followups" ? "max_followups" : "manual"; }
+// نسب مجموعها 100% بالظبط (أكبر باقي)، وصفر لو مفيش أسئلة مغلقة
 function percents(nums) {
   const total = nums.reduce((a, b) => a + b, 0);
   if (!total) return nums.map(() => 0);
@@ -1971,7 +2018,7 @@ function closedCardHtml(timeout, manual, maxf) {
     </div>
     <p class="muted" style="margin:10px 0 0;font-size:12px">«يدوياً» بتشمل الأسئلة القديمة اللي ما اتسجلش لها سبب. اضغط أي سطر لعرض أسئلته في الأرشيف.</p>`;
 }
-function updateQuestionCards() {
+function updateQuestionCards() {   // بيحدّث الأرقام فوراً بعد أي تغيير في حالة سؤال (من غير إعادة رسم الصفحة)
   if (!$("qs-total")) return;
   const c = calcQStats(questionsCache);
   const set = (id, v) => { const el = $(id); if (el) el.textContent = v; };
@@ -1980,6 +2027,7 @@ function updateQuestionCards() {
   set("qs-wait", `منهم ${c.wait} في انتظار رد العميل`);
 }
 
+// ---------- كروت العملاء + فلتر اليوم ----------
 function custKpisHtml(st) {
   const p = st.phones || { shared: 0, notShared: 0, rate: 0 };
   return `
@@ -1998,7 +2046,7 @@ async function loadCustomersDay(date) {
     $("custMode").textContent = `بيانات يوم ${date} فقط`;
   } catch (e) { toast(e.message, "bad"); }
 }
-
+// ---------- الكروت العلوية + فلتر اليوم ----------
 let mainKpisDefault = "";
 async function loadOverviewDay(date) {
   try {
@@ -2035,6 +2083,7 @@ function statsSectionsHtml(st) {
     `;
 }
 
+// ---------- نوافذ مساعدة + قوائم العملاء ----------
 function mkModal(html, width = 700) {
   const bg = document.createElement("div");
   bg.className = "modal-bg";
@@ -2056,27 +2105,23 @@ async function openCustomersList(filter) {
     <div class="row" style="margin-top:10px"><button class="ghost" data-close>إغلاق</button></div>`, 760);
   const input = bg.querySelector("#cl-q"), body = bg.querySelector("#cl-body"), pager = bg.querySelector("#cl-pager");
   let seq = 0, page = 1;
-  const pageSize = 25;
   const load = async () => {
     const mine = ++seq;
     try {
-      const r = await api("customers", { filter, q: input.value.trim(), page, pageSize, paginate: true });
+      const r = await api("customers", { filter, q: input.value.trim(), page });
       if (mine !== seq) return;
-      const list = Array.isArray(r.customers) ? r.customers : [];
-      const total = typeof r.total === "number" ? r.total : list.length;
-      const pages = typeof r.pages === "number" ? r.pages : Math.max(1, Math.ceil(total / pageSize));
-      page = typeof r.page === "number" ? r.page : page;
+      page = r.page;
       body.className = "";
-      body.innerHTML = list.length ? `<div class="muted" style="margin-bottom:6px">عدد النتائج: ${total} (معروض ${list.length} في الصفحة)</div><div style="overflow:auto"><table><tr><th>العميل</th><th>Telegram ID</th><th>حالة المشاركة</th><th>أول تفاعل مسجل</th><th></th></tr>${list.map((c) => `<tr>
+      body.innerHTML = r.customers.length ? `<div class="muted" style="margin-bottom:6px">عدد النتائج: ${r.total}</div><div style="overflow:auto"><table><tr><th>العميل</th><th>Telegram ID</th><th>حالة المشاركة</th><th>أول تفاعل مسجل</th><th></th></tr>${r.customers.map((c) => `<tr>
           <td><b>${esc(c.name || "غير معروف")}</b>${c.username ? `<br><span class="muted" dir="ltr">@${esc(c.username)}</span>` : ""}</td>
           <td dir="ltr">${esc(c.chatId)}</td><td>${PHONE_STATE_LABEL[c.phoneState] || ""}</td>
           <td>${c.firstSeen ? esc(fmtTime(c.firstSeen)) : "—"}</td>
           <td><button class="ghost" onclick='openCustomerDetail(${JSON.stringify(c.chatId)})'>تفاصيل</button></td></tr>`).join("")}</table></div>` : '<div class="muted">لا يوجد عملاء مطابقون</div>';
-      pager.innerHTML = pages > 1 ? `<button class="ghost" data-p="1" ${page === 1 ? "disabled" : ""}>⏮ الأولى</button>
+      pager.innerHTML = r.pages > 1 ? `<button class="ghost" data-p="1" ${page === 1 ? "disabled" : ""}>⏮ الأولى</button>
         <button class="ghost" data-p="${page - 1}" ${page === 1 ? "disabled" : ""}>السابق ▶</button>
-        <span class="muted">صفحة <b>${page}</b> من ${pages}</span>
-        <button class="ghost" data-p="${page + 1}" ${page === pages ? "disabled" : ""}>◀ التالي</button>
-        <button class="ghost" data-p="${pages}" ${page === pages ? "disabled" : ""}>الأخيرة ⏭</button>` : "";
+        <span class="muted">صفحة <b>${page}</b> من ${r.pages}</span>
+        <button class="ghost" data-p="${page + 1}" ${page === r.pages ? "disabled" : ""}>◀ التالي</button>
+        <button class="ghost" data-p="${r.pages}" ${page === r.pages ? "disabled" : ""}>الأخيرة ⏭</button>` : "";
       pager.querySelectorAll("button[data-p]").forEach((b) => (b.onclick = () => { page = +b.dataset.p; load(); body.scrollIntoView({ block: "nearest" }); }));
     } catch (e) { if (mine === seq) body.textContent = e.message; }
   };
@@ -2119,7 +2164,7 @@ async function openAllQuestions() {
     <div id="aq-body" style="margin-top:10px"></div>
     <div class="row" style="margin-top:10px"><button class="ghost" data-close>إغلاق</button></div>`, 900);
   const input = bg.querySelector("#aq-q"), body = bg.querySelector("#aq-body");
-  const drawAllQ = () => {
+  const draw = () => {
     const q = input.value.trim();
     const rows = questionsCache.filter((x) => !q || x.q.includes(q) || custSearchMatch(x, q));
     body.innerHTML = rows.length ? `<div class="muted" style="margin-bottom:6px">عدد الأسئلة: ${rows.length}</div><div style="overflow:auto;max-height:60vh"><table><tr><th>العميل</th><th>السؤال</th><th>الحالة</th><th>الوقت</th><th></th></tr>${rows.map((x) => `<tr>
@@ -2127,7 +2172,7 @@ async function openAllQuestions() {
         <td>${label[x.status || "open"] || esc(x.status)}</td><td>${esc(fmtTime(x.t))}</td>
         <td><button class="ghost" onclick='showConversation(${JSON.stringify(x.id)})'>🗂️ المحادثة</button></td></tr>`).join("")}</table></div>` : '<div class="muted">مفيش أسئلة</div>';
   };
-  input.addEventListener("input", drawAllQ); drawAllQ();
+  input.addEventListener("input", draw); draw();
 }
 
 async function loadStats(force = false) {
@@ -2149,6 +2194,7 @@ async function loadStats(force = false) {
       ? '<div class="delta muted">مفيش بيانات امبارح للمقارنة</div>'
       : `<div class="delta ${delta >= 0 ? "up" : "down"}">${delta >= 0 ? "▲" : "▼"} ${Math.abs(delta)}% عن امبارح</div>`;
 
+    // أوقات الذروة: إجمالي تاريخي افتراضي، أو يوم مستقل يختاره المستخدم
     lastHoursView = st.hours || {}; lastHoursDate = "";
     const hoursRows = hoursTable(lastHoursView);
     const peak7 = st.peakLast7 ? `${String(st.peakLast7.hour).padStart(2, "0")}:00 (${st.peakLast7.count} ضغطة)` : "لا توجد بيانات كافية";
@@ -2160,6 +2206,15 @@ async function loadStats(force = false) {
         <div class="bar-v" style="height:${Math.max(3, (d.presses / maxD) * 100)}%"></div>
         <div class="lbl">${d.date.slice(5)}</div>
       </div>`).join("");
+
+    const barRows = (obj, mapFn) => {
+      const entries = Object.entries(obj).sort((a, b) => b[1] - a[1]);
+      const max = Math.max(1, ...entries.map((e) => e[1]));
+      if (!entries.length) return '<tr><td colspan="3" class="muted">لا يوجد نشاط بعد</td></tr>';
+      return entries.map(([k, v]) => `
+        <tr><td>${esc(mapFn ? mapFn(k) : k)}</td><td>${v}</td>
+        <td style="width:35%"><div class="bar"><span style="width:${(v / max) * 100}%"></span></div></td></tr>`).join("");
+    };
 
     const used = labelUsage(st.pressByPath7d);
 
@@ -2176,13 +2231,13 @@ async function loadStats(force = false) {
       </div>
       ${statsSectionsHtml(st)}
 
-      <div class="card"><div class="row"><h2 style="margin:0">الضغطات آخر 7 أيام</h2><div class="row" style="gap:6px"><label class="muted">يوم محدد: <input id="dailyDate" type="date" onchange="loadDailyForDate(this.value)" style="width:auto"></label><button class="ghost" onclick="loadDailyForDate('')">آخر 7 أيام</button><button class="ghost" onclick="exportDaily()">📥 تصدير</button></div></div>
+      <div class="card"><div class="row"><h2 style="margin:0">الضغطات آخر 7 أيام</h2><div class="row" style="gap:6px"><label class="muted">يوم محدد: <input id="dailyDate" type="date" onchange="loadDailyForDate(this.value)" style="width:auto"></label><button class="ghost" onclick="loadDailyForDate(\"\")">آخر 7 أيام</button><button class="ghost" onclick="exportDaily()">📥 تصدير</button></div></div>
         <p id="dailyMode" class="muted">الضغطات خلال آخر 7 أيام</p><div id="dailyChart" class="chart">${chart}</div></div>
 
-      <div class="card" id="buttonsCard"><div class="row"><h2 style="margin:0">أكتر الزراير استخداماً (7 أيام)</h2><div class="row" style="gap:6px"><label class="muted">يوم محدد: <input id="buttonsDate" type="date" onchange="loadButtonsForDate(this.value)" style="width:auto"></label><button class="ghost" onclick="loadButtonsForDate('')">آخر 7 أيام</button><button class="ghost" onclick="exportButtons()">📥 تصدير</button></div></div>
+      <div class="card" id="buttonsCard"><div class="row"><h2 style="margin:0">أكتر الزراير استخداماً (7 أيام)</h2><div class="row" style="gap:6px"><label class="muted">يوم محدد: <input id="buttonsDate" type="date" onchange="loadButtonsForDate(this.value)" style="width:auto"></label><button class="ghost" onclick="loadButtonsForDate(\"\")">آخر 7 أيام</button><button class="ghost" onclick="exportButtons()">📥 تصدير</button></div></div>
         <p id="buttonsMode" class="muted">أكتر الزراير استخدامًا خلال آخر 7 أيام</p><table id="buttonsTable"><tr><th>الزرار</th><th>الضغطات</th><th></th></tr>${usageRows(used)}</table></div>
 
-      <div class="card" id="hoursCard"><div class="row"><h2 style="margin:0">🕒 أوقات الذروة</h2><div class="row" style="gap:6px"><label class="muted">يوم محدد: <input id="peakDate" type="date" onchange="loadHoursForDate(this.value)" style="width:auto"></label><button class="ghost" onclick="loadHoursForDate('')">الإجمالي</button><button class="ghost" onclick="exportHours()">📥 Excel</button></div></div>
+      <div class="card" id="hoursCard"><div class="row"><h2 style="margin:0">🕒 أوقات الذروة</h2><div class="row" style="gap:6px"><label class="muted">يوم محدد: <input id="peakDate" type="date" onchange="loadHoursForDate(this.value)" style="width:auto"></label><button class="ghost" onclick="loadHoursForDate("")">الإجمالي</button><button class="ghost" onclick="exportHours()">📥 Excel</button></div></div>
         <p id="hoursMode" class="muted">الإجمالي التاريخي لكل البيانات المتاحة</p>
         <table id="hoursTable"><tr><th>الساعة</th><th>الضغطات</th><th></th></tr>${hoursRows}</table>
         <p class="muted" style="margin:10px 0 0">الساعات بتوقيت القاهرة، والبيانات محفوظة تاريخيًا.</p></div>
@@ -2194,6 +2249,7 @@ async function loadStats(force = false) {
   }
 }
 
+// أقسام الإحصائيات اللي ممكن تتطوي (سهم على الشمال). مطوية افتراضياً، واختيارك بيتفتكر طول ما التاب مفتوح
 function collState() { try { return JSON.parse(sessionStorage.getItem("stats-coll") || "{}"); } catch { return {}; } }
 function makeCollapsible(cardId, key) {
   const card = $(cardId);
@@ -2212,7 +2268,7 @@ function makeCollapsible(cardId, key) {
     body.style.display = open ? "block" : "none";
     arrow.textContent = open ? "▴" : "▾";
     arrow.setAttribute("aria-expanded", String(open));
-    [...controls.children].forEach((c) => { if (c !== arrow) c.style.display = open ? "" : "none"; });
+    [...controls.children].forEach((c) => { if (c !== arrow) c.style.display = open ? "" : "none"; });   // أدوات القسم تظهر وهو مفتوح بس
   };
   arrow.onclick = () => {
     const open = body.style.display === "none";
@@ -2228,6 +2284,7 @@ function makeStatsCollapsible() {
   makeCollapsible("hoursCard", "hours");
 }
 
+// ---------- سجل النسخ ----------
 async function loadHistory() {
   const t = $("historyTable");
   t.innerHTML = '<tr><td class="muted">جاري التحميل...</td></tr>';
@@ -2245,6 +2302,7 @@ async function loadHistory() {
   }
 }
 
+// ---------- نظام الحظر ----------
 let bansCache = [];
 
 async function loadBans() {
