@@ -1,9 +1,8 @@
 // بوت تلجرام: قايمة + رجوع + روابط + زرار سؤال + بحث بالكلمات + تحويل الطبي للخط الساخن
 import { Bot, InlineKeyboard, Keyboard, webhookCallback } from "grammy";
 import {
-  trackVisitor, trackActive, trackPress, pushQuestion, questionAllowed, questionsLeft, MAX_QUESTIONS_COUNT, getIntake, DEFAULT_INTAKE_MESSAGE, questionForReply, addFollowup, getQuestions, answerQuestion, getExtraFollowups, limitForItem, maybeExpireQuestions, setPending, takePending, isBanned, setPendingImage, takePendingImage,
+  pushQuestion, questionAllowed, questionsLeft, MAX_QUESTIONS_COUNT, getIntake, DEFAULT_INTAKE_MESSAGE, questionForReply, addFollowup, getQuestions, getQuestionById, answerQuestion, getExtraFollowups, limitForItem, setPending, takePending, isBanned, setPendingImage, takePendingImage,
 } from "./stats.js";
-import { trackSubscriber } from "./registry.js";
 import { notifyStaffSafe, getNotifyConfig, consumeLinkCode, unlinkNotifyChat, isNotifyChat, MAX_NOTIFY_CHATS } from "./notify.js";
 import { phoneFeatureEnabled, claimPhonePrompt, phonePromptDue, hasPhone, savePhone, skipPhone, upsertInfo, normalizePhone } from "./customers.js";
 
@@ -11,7 +10,7 @@ const CONTENT_URL = process.env.CONTENT_URL;
 const IMGBB_API_KEY = process.env.IMGBB_API_KEY;
 const bot = new Bot(process.env.BOT_TOKEN);
 
-// ---- فيديو من القناة البرايفت: الزرار اللي فيه videoMsgId بيبعت نسخة من رسالة القناة للعميل (من غير "forwarded from") ----
+// فيديو من القناة البرايفت: الزرار اللي فيه videoMsgId بيبعت نسخة من رسالة القناة للعميل (من غير "forwarded from")
 // VIDEO_CHANNEL_ID = معرّف القناة (-100xxxxxxxxxx) ، VIDEO_PROTECT=1 (اختياري) يمنع العميل من تحويل/حفظ الفيديو
 const VIDEO_CHANNEL_ID = process.env.VIDEO_CHANNEL_ID;
 async function sendNodeVideo(ctx, node) {
@@ -21,13 +20,6 @@ async function sendNodeVideo(ctx, node) {
     await ctx.api.copyMessage(ctx.chat.id, VIDEO_CHANNEL_ID, id, { protect_content: process.env.VIDEO_PROTECT === "1" });
   } catch (e) { console.error("[video] copyMessage failed:", e?.description || e?.message); }   // فشل الفيديو ما يوقفش الرد
 }
-
-// تسجيل كل عميل (ID بس) في قاعدة المشتركين أول ما يتفاعل. أي فشل هنا ما يوقفش البوت.
-bot.use(async (ctx, next) => {
-  try { await trackSubscriber(ctx); }
-  catch (e) { console.error("[subscriber] Firestore write failed:", String(e?.message || e).slice(0, 200)); }
-  await next();
-});
 
 async function uploadToImgBB(fileId) {
   try {
@@ -268,7 +260,6 @@ async function maybePromptPhone(ctx) {
     if (!phoneFeatureEnabled() || ctx.chat?.type !== "private" || !ctx.from) return;
     if (!(await phonePromptDue(ctx.chat.id))) return;
     if (await isBanned(ctx.chat.id)) return;
-    try { await upsertInfo(ctx.from); } catch {}
     const m = (await getContent().catch(() => ({}))).messages || {};
     await sendPhonePrompt(ctx, m);
   } catch (e) { console.error("[phone] prompt failed:", e?.message); }
@@ -343,20 +334,17 @@ bot.command("start", async (ctx) => {
   try { if (await isBanned(ctx.chat.id)) return; } catch {}
   const { text, markup } = await renderFor(ctx, await getContent(), "");
   await ctx.reply(toHtml(text), HTML_OPTS(markup));
-  try { await trackVisitor(ctx.chat.id); } catch {}
   await maybePromptPhone(ctx);
 });
 
 async function showNode(ctx, path, track) {
   try { if (await isBanned(ctx.chat.id)) { await ctx.answerCallbackQuery(); return; } } catch {}
   try {
-    try { await trackActive(ctx.chat.id); } catch {}
     const node = getNode(await getContent(), path);
     const { text, markup } = await renderFor(ctx, node, path);
     await ctx.answerCallbackQuery();
     await sendNodeVideo(ctx, node);
     await ctx.reply(toHtml(text), HTML_OPTS(markup));
-    if (track) { try { await trackPress(path, node.label); } catch {} }
     await maybePromptPhone(ctx);
   } catch {
     await ctx.answerCallbackQuery({ text: "المحتوى اتغير، ابعت /start", show_alert: true });
@@ -455,13 +443,11 @@ bot.callbackQuery(/^ask:(.*)$/, async (ctx) => {
   const path = ctx.match[1];
   try {
     try { if (await isBanned(ctx.chat.id)) { await ctx.answerCallbackQuery(); return; } } catch {}
-    try { await trackActive(ctx.chat.id); } catch {}
     const content = await getContent();
     const node = getNode(content, path);
     await ctx.answerCallbackQuery();
     const intake = await getIntake().catch(() => ({ enabled: true }));
     if (!intake.enabled) {   // الزرار ظاهر، لكن بنعتذر بدل ما نفتح خانة السؤال
-      try { await trackPress(path, node.label); } catch {}
       return ctx.reply(toHtml(intake.message || DEFAULT_INTAKE_MESSAGE), HTML_OPTS((await renderFor(ctx, content, "")).markup));
     }
     if ((await questionsLeft(ctx.chat.id)) <= 0) {
@@ -471,7 +457,6 @@ bot.callbackQuery(/^ask:(.*)$/, async (ctx) => {
     await ctx.reply(content.messages?.askPrompt || DEFAULT_PROMPT, {
       reply_markup: { force_reply: true, input_field_placeholder: "اكتب سؤالك..." },
     });
-    try { await trackPress(path, node.label); } catch {}
   } catch {
     await ctx.answerCallbackQuery({ text: "المحتوى اتغير، ابعت /start", show_alert: true });
   }
@@ -479,7 +464,6 @@ bot.callbackQuery(/^ask:(.*)$/, async (ctx) => {
 
 // يعرض إجابة زرار واحد (زي ما لو العميل داس عليه)
 async function showHit(ctx, hit) {
-  try { await trackPress(hit.path, hit.node.label); } catch {}
   await sendNodeVideo(ctx, hit.node);
   if (hit.node.url) {
     const kb = new InlineKeyboard().url(hit.node.label, hit.node.url);
@@ -514,7 +498,7 @@ async function handleStaffGroupAnswer(ctx, text, msg, messages = {}) {
   if (answer.length > 3500) { await ctx.reply("الإجابة طويلة؛ الحد الأقصى 3500 حرف."); return true; }
 
   let question = null;
-  try { question = (await getQuestions()).find((x) => x.id === questionId); } catch {}
+  try { question = await getQuestionById(questionId); } catch {}
   if (!question?.chatId) { await ctx.reply("ملقتش السؤال ده في السجل؛ افتح لوحة التحكم للتأكد من حالته."); return true; }
   if (!(["open", "followup_pending"].includes(question.status || "open"))) {
     await ctx.reply("السؤال ده اترد عليه أو اتقفل بالفعل؛ افتح لوحة التحكم لو محتاج تراجع حالته.");
@@ -558,14 +542,18 @@ async function handleStaffGroupAnswer(ctx, text, msg, messages = {}) {
 
 // الرسايل النصية: طبي؟ ← رد على خانة السؤال؟ ← بحث بالكلمات ← رد عام
 async function handleMessageCore(ctx, text, msg) {
+  // معالجة رسائل المجموعات المرتبطة أولاً دون أي قراءات تصفح جانبية
+  if (["group", "supergroup"].includes(ctx.chat?.type)) {
+    const content = await getContent().catch(() => ({}));
+    const m = content.messages || {};
+    await handleStaffGroupAnswer(ctx, text, msg, m);
+    return;
+  }
+
   try { if (await isBanned(ctx.chat.id)) return; } catch {}
-  try { await trackActive(ctx.chat.id); } catch {}
   const content = await getContent().catch(() => ({}));
   const m = content.messages || {};
-  try { await notifyExpired(await maybeExpireQuestions(), m.autoClosed || DEFAULT_CLOSED_AUTO); } catch {}
   const root = (await renderFor(ctx, content, "")).markup;
-
-  if (["group", "supergroup"].includes(ctx.chat.type) && await handleStaffGroupAnswer(ctx, text, msg, m)) return;
 
   const repliedMessageId = msg.reply_to_message?.message_id;
   if (msg.reply_to_message?.from?.is_bot && repliedMessageId) {

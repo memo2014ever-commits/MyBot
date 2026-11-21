@@ -202,25 +202,26 @@ export async function customerMap(ids, { withPhones = false } = {}) {
 function toObj(arr) { const o = {}; for (let i = 0; i < (arr?.length || 0); i += 2) o[arr[i]] = arr[i + 1]; return o; }
 
 // كل العملاء المعروفين: اللي ليهم سجل + أصحاب الأسئلة (حتى لو قدامى بدون سجل بعد)
-// كل صفحة/بحث/فلتر في تاب العملاء كان بيقرا الهاشات التلاتة كاملة (3 × عدد العملاء). دلوقتي بتتقرا مرة كل دقيقتين وتتشارك
+// كل صفحة/بحث/فلتر في تاب العملاء: تم تحسينه لمنع قراءة cu:ph بالكامل (HGETALL PH) لتوفير آلاف القراءات
 let hashesCache = { t: 0, v: null, p: null };
 async function loadCustomerHashes() {
   const now = Date.now();
   if (hashesCache.v && now - hashesCache.t < CUSTOMER_CACHE_MS) return hashesCache.v;
   if (hashesCache.p) return hashesCache.p;
-  const p = Promise.all([firestoreCommand(["HGETALL", INFO]), firestoreCommand(["HGETALL", PHS]), firestoreCommand(["HGETALL", PH])])
-    .then(([infoA, phsA, phA]) => { hashesCache = { t: Date.now(), v: { infoA, phsA, phA }, p: null }; return hashesCache.v; })
+  // نكتفي بـ INFO و PHS فقط؛ قراءة PH محذوفة تماماً لمنع قراءة النصوص المشفرة غير المعروضة
+  const p = Promise.all([firestoreCommand(["HGETALL", INFO]), firestoreCommand(["HGETALL", PHS])])
+    .then(([infoA, phsA]) => { hashesCache = { t: Date.now(), v: { infoA, phsA, phA: [] }, p: null }; return hashesCache.v; })
     .catch((e) => { hashesCache.p = null; throw e; });
   hashesCache.p = p;
   return p;
 }
 export async function listCustomers({ questions = [], filter = "all", q = "", withPhones = false } = {}) {
-  const { infoA, phsA, phA } = await loadCustomerHashes();
-  const infos = toObj(infoA), states = toObj(phsA), phones = toObj(phA);
+  const { infoA, phsA } = await loadCustomerHashes();
+  const infos = toObj(infoA), states = toObj(phsA);
   const byId = {};
   const ensure = (id) => (byId[id] ||= { chatId: id, name: "", username: "", firstSeen: null });
   Object.keys(infos).forEach((id) => { const i = parse(infos[id]) || {}; Object.assign(ensure(id), { name: i.n || "", username: i.u || "", firstSeen: i.fs || null }); });
-  Object.keys(states).concat(Object.keys(phones)).forEach(ensure);
+  Object.keys(states).forEach(ensure);
   questions.forEach((x) => {
     if (!validId(x.chatId)) return;
     const c = ensure(String(x.chatId));
@@ -229,18 +230,17 @@ export async function listCustomers({ questions = [], filter = "all", q = "", wi
     if (!c.firstSeen || x.t < c.firstSeen) c.firstSeen = x.t;   // أقدم سؤال = أقدم تفاعل معروف
   });
   const needle = String(q || "").trim().toLowerCase().replace(/^@/, "");
-  const needleDigits = needle.replace(/\D/g, "");
   let rows = Object.values(byId).map((c) => {
-    const hasPh = !!phones[c.chatId];
-    return { ...c, phoneState: stateOf(states[c.chatId], hasPh), hasPhone: hasPh };
+    const st = states[c.chatId];
+    const info = parse(infos[c.chatId]);
+    const hasPh = (st && baseState(st) === "phone_shared") || !!(info?.pt);
+    return { ...c, phoneState: stateOf(st, hasPh), hasPhone: hasPh };
   });
   if (filter === "shared") rows = rows.filter((c) => c.hasPhone);
   else if (filter === "notshared") rows = rows.filter((c) => !c.hasPhone);
   if (needle) {
     rows = rows.filter((c) => {
-      if (c.name.toLowerCase().includes(needle) || c.username.toLowerCase().includes(needle) || c.chatId.includes(needle)) return true;
-      if (withPhones && needleDigits.length >= 3 && c.hasPhone) return (decryptPhone(c.chatId, phones[c.chatId]) || "").replace(/\D/g, "").includes(needleDigits);
-      return false;
+      return c.name.toLowerCase().includes(needle) || c.username.toLowerCase().includes(needle) || c.chatId.includes(needle);
     });
   }
   rows.sort((a, b) => (b.firstSeen || 0) - (a.firstSeen || 0));
@@ -256,9 +256,10 @@ export async function phoneSharedCount() {
   return Number((await firestoreCommand(["HLEN", PH])) ?? 0) || 0;
 }
 
-// عدد اللي شاركوا أرقامهم في يوم محدد (من وقت المشاركة pt المسجّل في سجل العميل؛ بدون أي رقم هاتف)
+// عدد اللي شاركوا أرقامهم في يوم محدد (يعاد استخدام الكاش لتوفير HGETALL إضافية)
 export async function phonesSharedOnDay(date) {
-  const o = toObj((await firestoreCommand(["HGETALL", INFO])) || []);
+  const { infoA } = await loadCustomerHashes().catch(() => ({ infoA: [] }));
+  const o = toObj(infoA || []);
   let n = 0;
   for (const v of Object.values(o)) { const pt = parse(v)?.pt; if (pt && cairoDayOf(pt) === date) n++; }
   return n;

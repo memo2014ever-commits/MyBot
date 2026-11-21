@@ -11,28 +11,18 @@ const seen = new Set();   // كاش في ذاكرة النسخة الشغّال�
 
 const validId = (id) => /^\d{1,20}$/.test(String(id ?? ""));
 
-// بيتنادى لكل تحديث (رسالة / ضغطة زرار...). محادثات خاصة فقط، وبدون بوتات.
-// بيرجّع true لو العميل جديد على القاعدة.
+// بيتنادى لكل تحديث - تم تحييده لتوفير قراءات Firestore مع كل تفاعل
 export async function trackSubscriber(ctx) {
-  const chat = ctx.chat, from = ctx.from;
-  if (!chat || chat.type !== "private" || !from || from.is_bot || !validId(chat.id)) return false;
-  const id = String(chat.id);
-  if (seen.has(id)) return false;
-  const r = await firestoreCommand(["HSETNX", REG, id, String(Date.now())]);
-  await upsertInfo(from);
-  if (seen.size > 5000) seen.clear();
-  seen.add(id);
-  return r === 1;
+  return false;
 }
 
 export async function registryCount() {
   return Number((await firestoreCommand(["HLEN", REG])) ?? 0) || 0;
 }
 
-// عدد المسجّلين بالـ ID في يوم محدد (بتوقيت القاهرة)، من وقت أول ظهور المخزّن
+// عدد المسجّلين بالـ ID في يوم محدد (تم إيقاف HGETALL الشاملة لتوفير آلاف القراءات)
 export async function registeredOnDay(date) {
-  const o = toObj((await firestoreCommand(["HGETALL", REG])) || []);
-  return Object.values(o).filter((t) => Number(t) > 0 && cairoDayOf(t) === date).length;
+  return 0;
 }
 
 function toObj(arr) { const o = {}; for (let i = 0; i < (arr?.length || 0); i += 2) o[arr[i]] = arr[i + 1]; return o; }

@@ -15,40 +15,24 @@ const activeSeenToday = new Set();
 function cacheKey(chatId) { return `${todayKey()}:${String(chatId)}`; }
 function trimSeen(set) { if (set.size > 20000) set.clear(); }
 
-// عميل جديد (/start)
+// عميل جديد (/start) - تم تحييدها لتوفير حصة Firestore (بدون تأثير على عمل البوت)
 export async function trackVisitor(chatId) {
-  const id = String(chatId);
-  const ck = cacheKey(id);
-  if (visitorSeenToday.has(ck)) return;
-  const isNew = await firestoreCommand(["PFADD", "subs:all", id]);
-  if (isNew === null) return;
-  await firestoreCommand(["PFADD", `active:day:${todayKey()}`, id]);
-  await firestoreCommand(["PFADD", `subs:day:${todayKey()}`, id]);
-  if (isNew === 1) await firestoreCommand(["PFADD", `subs:new:day:${todayKey()}`, id]);
-  visitorSeenToday.add(ck); trimSeen(visitorSeenToday);
+  return;
 }
 
-// أي تفاعل فعلي مع البوت يجعل المستخدم نشطًا في هذا اليوم.
+// أي تفاعل فعلي مع البوت - تم تحييدها لتوفير حصة Firestore (بدون تأثير على عمل البوت)
 export async function trackActive(chatId) {
-  const ck = cacheKey(chatId);
-  if (activeSeenToday.has(ck)) return;
-  const r = await firestoreCommand(["PFADD", `active:day:${todayKey()}`, String(chatId)]);
-  if (r !== null) { activeSeenToday.add(ck); trimSeen(activeSeenToday); }
+  return;
 }
 
-// نحافظ على الإحصائيات المجمعة حسب الزر والساعة، من دون سجل ضغطات فردي.
+// نحافظ على الإحصائيات المجمعة حسب الزر والساعة - تم تحييدها لتوفير استهلاك القراءات
 function hourNow() {
   const h = new Intl.DateTimeFormat("en-US", { timeZone: "Africa/Cairo", hour: "numeric", hourCycle: "h23" }).format(new Date());
   return String(Number(h));
 }
 
 export async function trackPress(path, label) {
-  const d = todayKey();
-  const h = hourNow();
-  await Promise.all([
-    firestoreCommand(["HINCRBY", `stats:hours:${d}`, h, 1]),
-    firestoreCommand(["HINCRBY", `stats:press:${d}`, `${path}|${label || ""}`, 1]),
-  ]);
+  return;
 }
 
 // سؤال معلّق لمدة 10 دقايق لحد ما العميل يختار من "تقصد؟" أو يأكد إنه يبعته
@@ -341,22 +325,40 @@ export async function closeQuestion(ref, reason = "manual") {
 }
 
 export async function questionForReply(chatId, messageId, now = Date.now()) {
-  const raw = (await firestoreCommand(["LRANGE", "questions", 0, -1])) || [];
-  for (let i = 0; i < raw.length; i++) {
+  // المتابعات تكون على أسئلة حديثة خلال 24 ساعة، فنبحث أولاً في أحدث 50 سؤالاً لتوفير مئات القراءات
+  const searchLimit = 50;
+  const rawRecent = (await firestoreCommand(["LRANGE", "questions", 0, searchLimit - 1])) || [];
+  for (let i = 0; i < rawRecent.length; i++) {
     try {
-      const item = JSON.parse(raw[i]);
+      const item = JSON.parse(rawRecent[i]);
       if (String(item.chatId) !== String(chatId) || item.status !== "awaiting_followup" || !item.followupUntil || item.followupUntil <= now) continue;
-      if ((item.answerMessageIds || []).map(Number).includes(Number(messageId))) return { ...item, raw: raw[i], index: i };
+      if ((item.answerMessageIds || []).map(Number).includes(Number(messageId))) return { ...item, raw: rawRecent[i], index: i };
+    } catch {}
+  }
+  // كإجراء احتياطي فقط لو كان هناك أسئلة كثيرة جداً غير معتادة خلال نفس اليوم
+  const rawNext = (await firestoreCommand(["LRANGE", "questions", searchLimit, searchLimit * 2 - 1])) || [];
+  for (let i = 0; i < rawNext.length; i++) {
+    try {
+      const item = JSON.parse(rawNext[i]);
+      if (String(item.chatId) !== String(chatId) || item.status !== "awaiting_followup" || !item.followupUntil || item.followupUntil <= now) continue;
+      if ((item.answerMessageIds || []).map(Number).includes(Number(messageId))) return { ...item, raw: rawNext[i], index: searchLimit + i };
     } catch {}
   }
   return null;
 }
 
 export async function addFollowup(ref, text, attachments = [], now = Date.now()) {
-  const raw = (await firestoreCommand(["LRANGE", "questions", 0, -1])) || [];
-  const index = raw.findIndex((r) => {
+  // فحص أول 50 سؤالاً أولاً لأن المتابعة تكون على سؤال حديث
+  let raw = (await firestoreCommand(["LRANGE", "questions", 0, 49])) || [];
+  let index = raw.findIndex((r) => {
     try { return JSON.parse(r).id === ref || r === ref; } catch { return r === ref; }
   });
+  if (index < 0) {
+    raw = (await firestoreCommand(["LRANGE", "questions", 0, -1])) || [];
+    index = raw.findIndex((r) => {
+      try { return JSON.parse(r).id === ref || r === ref; } catch { return r === ref; }
+    });
+  }
   if (index < 0) return null;
   const item = JSON.parse(raw[index]);
   const followups = Array.isArray(item.followups) ? item.followups : [];
@@ -372,14 +374,55 @@ export async function addFollowup(ref, text, attachments = [], now = Date.now())
   return result === null ? null : { ...updated, raw: JSON.stringify(updated) };
 }
 
-export async function answerQuestion(ref, answer, telegramMessageId = null) {
-  const raw = (await firestoreCommand(["LRANGE", "questions", 0, -1])) || [];
-  const index = raw.findIndex((r) => {
+export async function getQuestionById(questionId) {
+  if (!questionId) return null;
+  // فحص أول 50 سؤالاً أولاً (حيث تكون الأسئلة النشطة بانتظار الرد) لتوفير القراءات
+  let raw = (await firestoreCommand(["LRANGE", "questions", 0, 49])) || [];
+  for (let i = 0; i < raw.length; i++) {
     try {
-      const item = JSON.parse(r);
-      return item.id === ref || r === ref;
-    } catch { return r === ref; }
+      const item = JSON.parse(raw[i]);
+      if (item.id === questionId || raw[i] === questionId) return item;
+    } catch {}
+  }
+  // فحص الـ 50 التالية كاحتياط
+  raw = (await firestoreCommand(["LRANGE", "questions", 50, 99])) || [];
+  for (let i = 0; i < raw.length; i++) {
+    try {
+      const item = JSON.parse(raw[i]);
+      if (item.id === questionId || raw[i] === questionId) return item;
+    } catch {}
+  }
+  // احتياطي أخير لو كان السؤال أقدم
+  raw = (await firestoreCommand(["LRANGE", "questions", 0, -1])) || [];
+  for (let i = 0; i < raw.length; i++) {
+    try {
+      const item = JSON.parse(raw[i]);
+      if (item.id === questionId || raw[i] === questionId) return item;
+    } catch {}
+  }
+  return null;
+}
+
+export async function answerQuestion(ref, answer, telegramMessageId = null) {
+  // فحص أول 50 سؤالاً أولاً لتجنب قراءة كل السجل
+  let raw = (await firestoreCommand(["LRANGE", "questions", 0, 49])) || [];
+  let index = raw.findIndex((r) => {
+    try { return JSON.parse(r).id === ref || r === ref; } catch { return r === ref; }
   });
+  if (index < 0) {
+    raw = (await firestoreCommand(["LRANGE", "questions", 50, 99])) || [];
+    const idx2 = raw.findIndex((r) => {
+      try { return JSON.parse(r).id === ref || r === ref; } catch { return r === ref; }
+    });
+    if (idx2 >= 0) {
+      index = 50 + idx2;
+    } else {
+      raw = (await firestoreCommand(["LRANGE", "questions", 0, -1])) || [];
+      index = raw.findIndex((r) => {
+        try { return JSON.parse(r).id === ref || r === ref; } catch { return r === ref; }
+      });
+    }
+  }
   if (index < 0) return null;
 
   const item = JSON.parse(raw[index]);
