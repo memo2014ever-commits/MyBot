@@ -17,32 +17,33 @@ const FALLBACK_CONTENT = {
   messages: {},
 };
 
-// دوال حماية لنداءات Firestore حتى لا يتعطل مسار القوائم عند نفاد الحصة (Quota Exceeded)
+// حد زمني سريع لنداءات Firestore في مسار القوائم لمنع التقل أو التعليق عند نفاد الحصة
+const FIRESTORE_READ_TIMEOUT_MS = 800;
+
+function withTimeout(promise, ms, fallbackValue) {
+  let timerId;
+  const timeoutPromise = new Promise((resolve) => {
+    timerId = setTimeout(() => resolve(fallbackValue), ms);
+  });
+  return Promise.race([
+    Promise.resolve(promise).catch(() => fallbackValue),
+    timeoutPromise,
+  ]).finally(() => clearTimeout(timerId));
+}
+
 async function safeIsBanned(chatId) {
   if (!chatId) return false;
-  try {
-    return Boolean(await isBanned(chatId));
-  } catch {
-    return false;
-  }
+  return Boolean(await withTimeout(isBanned(chatId), FIRESTORE_READ_TIMEOUT_MS, false));
 }
 
 async function safeHasPhone(chatId) {
   if (!chatId) return false;
-  try {
-    return Boolean(await hasPhone(chatId));
-  } catch {
-    return false;
-  }
+  return Boolean(await withTimeout(hasPhone(chatId), FIRESTORE_READ_TIMEOUT_MS, false));
 }
 
 async function safePhonePromptDue(chatId) {
   if (!chatId) return false;
-  try {
-    return Boolean(await phonePromptDue(chatId));
-  } catch {
-    return false;
-  }
+  return Boolean(await withTimeout(phonePromptDue(chatId), FIRESTORE_READ_TIMEOUT_MS, false));
 }
 
 // فيديو من القناة البرايفت: الزرار اللي فيه videoMsgId بيبعت نسخة من رسالة القناة للعميل (من غير "forwarded from")
