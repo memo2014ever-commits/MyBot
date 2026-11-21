@@ -10,6 +10,9 @@ const CONTENT_URL = process.env.CONTENT_URL;
 const IMGBB_API_KEY = process.env.IMGBB_API_KEY;
 const bot = new Bot(process.env.BOT_TOKEN);
 
+// رد آمن على callbackQuery لتجنب توقف الـ handler عند انتهاء مهلة الاستعلام أو Cold Start
+const safeAnswerCallback = (ctx, opts) => (opts ? ctx.answerCallbackQuery(opts) : ctx.answerCallbackQuery()).catch(() => {});
+
 // حد زمني سريع لفحوصات القراءة الجانبية في مسار القوائم (250ms = ربع ثانية) عشان ما يأخرش العميل أو يعلق وقت التقل/الـ Quota
 const READ_TIMEOUT_MS = 250;
 function withTimeout(promise, ms, fallbackValue) {
@@ -344,13 +347,13 @@ bot.on("message:contact", async (ctx) => {
 
 // زرار القايمة الرئيسية: مشاركة الرقم لاحقاً
 bot.callbackQuery("sharephone", async (ctx) => {
-  await ctx.answerCallbackQuery();
+  await safeAnswerCallback(ctx);
   try { if (await safeIsBanned(ctx.chat.id)) return; } catch {}
   if (!phoneFeatureEnabled() || ctx.chat?.type !== "private") return;
   const content = await getContent().catch(() => FALLBACK_CONTENT);
   const m = content.messages || {};
   try { await claimPhonePrompt(ctx.chat.id); } catch {}   // علشان الطلب التلقائي ما يظهرش بعد كده
-  if (await hasPhone(ctx.chat.id).catch(() => false)) return ctx.reply(toHtml(m.phoneAlready || DEFAULT_PHONE_ALREADY), HTML_OPTS((await renderFor(ctx, content, "")).markup));
+  if (await safeHasPhone(ctx.chat.id)) return ctx.reply(toHtml(m.phoneAlready || DEFAULT_PHONE_ALREADY), HTML_OPTS((await renderFor(ctx, content, "")).markup));
   return sendPhonePrompt(ctx, m);
 });
 
@@ -387,20 +390,20 @@ bot.command("start", async (ctx) => {
 });
 
 async function showNode(ctx, path, track) {
-  try { if (await safeIsBanned(ctx.chat.id)) { await ctx.answerCallbackQuery(); return; } } catch {}
+  await safeAnswerCallback(ctx);
+  try { if (await safeIsBanned(ctx.chat.id)) return; } catch {}
   try {
     const content = await getContent();
     const node = getNode(content, path);
     if (!node) throw new Error("Node not found");
     const { text, markup } = await renderFor(ctx, node, path);
-    await ctx.answerCallbackQuery();
     await sendNodeVideo(ctx, node);
     await ctx.reply(toHtml(text), HTML_OPTS(markup));
     if (ctx.chat?.type === "private" && ctx.from && phoneFeatureEnabled()) {
       void maybePromptPhone(ctx);
     }
   } catch {
-    await ctx.answerCallbackQuery({ text: "المحتوى اتغير، ابعت /start", show_alert: true });
+    await safeAnswerCallback(ctx, { text: "المحتوى اتغير، ابعت /start", show_alert: true });
   }
 }
 
@@ -478,7 +481,7 @@ async function showChoices(ctx, hits, content, m, withSendAnyway) {
 
 // العميل قال "ده مش قصدي": نسجل السؤال المعلّق
 bot.callbackQuery("pq", async (ctx) => {
-  await ctx.answerCallbackQuery();
+  await safeAnswerCallback(ctx);
   try { if (await safeIsBanned(ctx.chat.id)) return; } catch {}
   let text = null;
   try { text = await takePending(ctx.chat.id); } catch {}
@@ -494,12 +497,12 @@ bot.callbackQuery("pq", async (ctx) => {
 // زرار "ابعت سؤالك"
 bot.callbackQuery(/^ask:(.*)$/, async (ctx) => {
   const path = ctx.match[1];
+  await safeAnswerCallback(ctx);
   try {
-    try { if (await safeIsBanned(ctx.chat.id)) { await ctx.answerCallbackQuery(); return; } } catch {}
+    try { if (await safeIsBanned(ctx.chat.id)) return; } catch {}
     const content = await getContent();
     const node = getNode(content, path);
     if (!node) throw new Error("Node not found");
-    await ctx.answerCallbackQuery();
     const intake = await getIntake().catch(() => ({ enabled: true }));
     if (!intake.enabled) {   // الزرار ظاهر، لكن بنعتذر بدل ما نفتح خانة السؤال
       return ctx.reply(toHtml(intake.message || DEFAULT_INTAKE_MESSAGE), HTML_OPTS((await renderFor(ctx, content, "")).markup));
@@ -512,7 +515,7 @@ bot.callbackQuery(/^ask:(.*)$/, async (ctx) => {
       reply_markup: { force_reply: true, input_field_placeholder: "اكتب سؤالك..." },
     });
   } catch {
-    await ctx.answerCallbackQuery({ text: "المحتوى اتغير، ابعت /start", show_alert: true });
+    await safeAnswerCallback(ctx, { text: "المحتوى اتغير، ابعت /start", show_alert: true });
   }
 });
 
