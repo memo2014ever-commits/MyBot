@@ -1,4 +1,5 @@
 // بوت تلجرام: قايمة + رجوع + روابط + زرار سؤال + بحث بالكلمات + تحويل الطبي للخط الساخن
+import { createRequire } from "module";
 import { Bot, InlineKeyboard, Keyboard, webhookCallback } from "grammy";
 import {
   pushQuestion, questionAllowed, questionsLeft, MAX_QUESTIONS_COUNT, getIntake, DEFAULT_INTAKE_MESSAGE, questionForReply, addFollowup, getQuestions, getQuestionById, answerQuestion, getExtraFollowups, limitForItem, setPending, takePending, isBanned, setPendingImage, takePendingImage,
@@ -9,6 +10,20 @@ import { phoneFeatureEnabled, claimPhonePrompt, phonePromptDue, hasPhone, savePh
 const CONTENT_URL = process.env.CONTENT_URL;
 const IMGBB_API_KEY = process.env.IMGBB_API_KEY;
 const bot = new Bot(process.env.BOT_TOKEN);
+const require = createRequire(import.meta.url);
+const FALLBACK_CONTENT = require("../content.json");
+
+bot.catch((err) => {
+  console.error("[telegram] update failed:", err.error?.description || err.error?.message || err.message);
+});
+
+async function safeAnswerCallbackQuery(ctx, options) {
+  try {
+    await ctx.answerCallbackQuery(options);
+  } catch {
+    // Callback queries may expire before a cold serverless instance can answer them.
+  }
+}
 
 // فيديو من القناة البرايفت: الزرار اللي فيه videoMsgId بيبعت نسخة من رسالة القناة للعميل (من غير "forwarded from")
 // VIDEO_CHANNEL_ID = معرّف القناة (-100xxxxxxxxxx) ، VIDEO_PROTECT=1 (اختياري) يمنع العميل من تحويل/حفظ الفيديو
@@ -162,13 +177,45 @@ function searchNodes(content, text) {
 
 let cache = null;
 let cacheTime = 0;
-async function getContent() {
-  if (!cache || Date.now() - cacheTime > 60_000) {
-    const res = await fetch(CONTENT_URL + "?t=" + Date.now());
-    cache = await res.json();
+let contentRefresh = null;
+const CONTENT_CACHE_MS = 60_000;
+const CONTENT_TIMEOUT_MS = 3_000;
+
+async function refreshContent() {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), CONTENT_TIMEOUT_MS);
+  try {
+    if (!CONTENT_URL) throw new Error("CONTENT_URL is not configured");
+    const separator = CONTENT_URL.includes("?") ? "&" : "?";
+    const res = await fetch(CONTENT_URL + separator + "t=" + Date.now(), { signal: controller.signal });
+    if (!res.ok) throw new Error(`CONTENT_URL returned HTTP ${res.status}`);
+    const content = await res.json();
+    if (!content || typeof content !== "object" || !Array.isArray(content.items)) {
+      throw new Error("CONTENT_URL returned invalid content");
+    }
+    cache = content;
+  } catch (e) {
+    console.error("[content] refresh failed:", e?.message || e);
+    if (!cache) cache = FALLBACK_CONTENT;
+  } finally {
     cacheTime = Date.now();
+    clearTimeout(timeout);
   }
   return cache;
+}
+
+async function getContent() {
+  if (cache && Date.now() - cacheTime <= CONTENT_CACHE_MS) return cache;
+  if (cache) {
+    if (!contentRefresh) {
+      contentRefresh = refreshContent().finally(() => { contentRefresh = null; });
+    }
+    return cache;
+  }
+  if (!contentRefresh) {
+    contentRefresh = refreshContent().finally(() => { contentRefresh = null; });
+  }
+  return contentRefresh;
 }
 
 // "0.2" = الزرار رقم 0 جواه الزرار رقم 2. الجذر = ""
@@ -299,7 +346,7 @@ bot.on("message:contact", async (ctx) => {
 
 // زرار القايمة الرئيسية: مشاركة الرقم لاحقاً
 bot.callbackQuery("sharephone", async (ctx) => {
-  await ctx.answerCallbackQuery();
+  await safeAnswerCallbackQuery(ctx);
   try { if (await isBanned(ctx.chat.id)) return; } catch {}
   if (!phoneFeatureEnabled() || ctx.chat?.type !== "private") return;
   const m = (await getContent().catch(() => ({}))).messages || {};
@@ -338,16 +385,16 @@ bot.command("start", async (ctx) => {
 });
 
 async function showNode(ctx, path, track) {
-  try { if (await isBanned(ctx.chat.id)) { await ctx.answerCallbackQuery(); return; } } catch {}
+  try { if (await isBanned(ctx.chat.id)) { await safeAnswerCallbackQuery(ctx); return; } } catch {}
   try {
     const node = getNode(await getContent(), path);
     const { text, markup } = await renderFor(ctx, node, path);
-    await ctx.answerCallbackQuery();
+    await safeAnswerCallbackQuery(ctx);
     await sendNodeVideo(ctx, node);
     await ctx.reply(toHtml(text), HTML_OPTS(markup));
     await maybePromptPhone(ctx);
   } catch {
-    await ctx.answerCallbackQuery({ text: "المحتوى اتغير، ابعت /start", show_alert: true });
+    await safeAnswerCallbackQuery(ctx, { text: "المحتوى اتغير، ابعت /start", show_alert: true });
   }
 }
 
@@ -425,7 +472,7 @@ async function showChoices(ctx, hits, content, m, withSendAnyway) {
 
 // العميل قال "ده مش قصدي": نسجل السؤال المعلّق
 bot.callbackQuery("pq", async (ctx) => {
-  await ctx.answerCallbackQuery();
+  await safeAnswerCallbackQuery(ctx);
   try { if (await isBanned(ctx.chat.id)) return; } catch {}
   let text = null;
   try { text = await takePending(ctx.chat.id); } catch {}
@@ -442,10 +489,10 @@ bot.callbackQuery("pq", async (ctx) => {
 bot.callbackQuery(/^ask:(.*)$/, async (ctx) => {
   const path = ctx.match[1];
   try {
-    try { if (await isBanned(ctx.chat.id)) { await ctx.answerCallbackQuery(); return; } } catch {}
+    try { if (await isBanned(ctx.chat.id)) { await safeAnswerCallbackQuery(ctx); return; } } catch {}
     const content = await getContent();
     const node = getNode(content, path);
-    await ctx.answerCallbackQuery();
+    await safeAnswerCallbackQuery(ctx);
     const intake = await getIntake().catch(() => ({ enabled: true }));
     if (!intake.enabled) {   // الزرار ظاهر، لكن بنعتذر بدل ما نفتح خانة السؤال
       return ctx.reply(toHtml(intake.message || DEFAULT_INTAKE_MESSAGE), HTML_OPTS((await renderFor(ctx, content, "")).markup));
@@ -458,7 +505,7 @@ bot.callbackQuery(/^ask:(.*)$/, async (ctx) => {
       reply_markup: { force_reply: true, input_field_placeholder: "اكتب سؤالك..." },
     });
   } catch {
-    await ctx.answerCallbackQuery({ text: "المحتوى اتغير، ابعت /start", show_alert: true });
+    await safeAnswerCallbackQuery(ctx, { text: "المحتوى اتغير، ابعت /start", show_alert: true });
   }
 });
 
