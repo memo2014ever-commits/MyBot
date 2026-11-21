@@ -1,5 +1,4 @@
 // بوت تلجرام: قايمة + رجوع + روابط + زرار سؤال + بحث بالكلمات + تحويل الطبي للخط الساخن
-import { createRequire } from "module";
 import { Bot, InlineKeyboard, Keyboard, webhookCallback } from "grammy";
 import {
   pushQuestion, questionAllowed, questionsLeft, MAX_QUESTIONS_COUNT, getIntake, DEFAULT_INTAKE_MESSAGE, questionForReply, addFollowup, getQuestions, getQuestionById, answerQuestion, getExtraFollowups, limitForItem, setPending, takePending, isBanned, setPendingImage, takePendingImage,
@@ -10,53 +9,6 @@ import { phoneFeatureEnabled, claimPhonePrompt, phonePromptDue, hasPhone, savePh
 const CONTENT_URL = process.env.CONTENT_URL;
 const IMGBB_API_KEY = process.env.IMGBB_API_KEY;
 const bot = new Bot(process.env.BOT_TOKEN);
-const require = createRequire(import.meta.url);
-const FALLBACK_CONTENT = require("../content.json");
-const FIRESTORE_CHECK_TIMEOUT_MS = 1_500;
-
-bot.catch((err) => {
-  console.error("[telegram] update failed:", err.error?.description || err.error?.message || err.message);
-});
-
-async function withFirestoreCheckTimeout(operation, label) {
-  let timeout;
-  try {
-    return await Promise.race([
-      operation,
-      new Promise((_, reject) => {
-        timeout = setTimeout(() => reject(new Error(`${label} timed out`)), FIRESTORE_CHECK_TIMEOUT_MS);
-      }),
-    ]);
-  } finally {
-    clearTimeout(timeout);
-  }
-}
-
-async function isBannedForUpdate(chatId) {
-  try {
-    return await withFirestoreCheckTimeout(isBanned(chatId), "ban check");
-  } catch (e) {
-    console.error("[access] ban check failed; continuing:", e?.message || e);
-    return false;
-  }
-}
-
-async function hasPhoneForUpdate(chatId) {
-  try {
-    return await withFirestoreCheckTimeout(hasPhone(chatId), "phone check");
-  } catch (e) {
-    console.error("[phone] lookup failed; showing optional button:", e?.message || e);
-    return false;
-  }
-}
-
-async function safeAnswerCallbackQuery(ctx, options) {
-  try {
-    await ctx.answerCallbackQuery(options);
-  } catch {
-    // Callback queries may expire before a cold serverless instance can answer them.
-  }
-}
 
 // فيديو من القناة البرايفت: الزرار اللي فيه videoMsgId بيبعت نسخة من رسالة القناة للعميل (من غير "forwarded from")
 // VIDEO_CHANNEL_ID = معرّف القناة (-100xxxxxxxxxx) ، VIDEO_PROTECT=1 (اختياري) يمنع العميل من تحويل/حفظ الفيديو
@@ -210,45 +162,13 @@ function searchNodes(content, text) {
 
 let cache = null;
 let cacheTime = 0;
-let contentRefresh = null;
-const CONTENT_CACHE_MS = 60_000;
-const CONTENT_TIMEOUT_MS = 3_000;
-
-async function refreshContent() {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), CONTENT_TIMEOUT_MS);
-  try {
-    if (!CONTENT_URL) throw new Error("CONTENT_URL is not configured");
-    const separator = CONTENT_URL.includes("?") ? "&" : "?";
-    const res = await fetch(CONTENT_URL + separator + "t=" + Date.now(), { signal: controller.signal });
-    if (!res.ok) throw new Error(`CONTENT_URL returned HTTP ${res.status}`);
-    const content = await res.json();
-    if (!content || typeof content !== "object" || !Array.isArray(content.items)) {
-      throw new Error("CONTENT_URL returned invalid content");
-    }
-    cache = content;
-  } catch (e) {
-    console.error("[content] refresh failed:", e?.message || e);
-    if (!cache) cache = FALLBACK_CONTENT;
-  } finally {
+async function getContent() {
+  if (!cache || Date.now() - cacheTime > 60_000) {
+    const res = await fetch(CONTENT_URL + "?t=" + Date.now());
+    cache = await res.json();
     cacheTime = Date.now();
-    clearTimeout(timeout);
   }
   return cache;
-}
-
-async function getContent() {
-  if (cache && Date.now() - cacheTime <= CONTENT_CACHE_MS) return cache;
-  if (cache) {
-    if (!contentRefresh) {
-      contentRefresh = refreshContent().finally(() => { contentRefresh = null; });
-    }
-    return cache;
-  }
-  if (!contentRefresh) {
-    contentRefresh = refreshContent().finally(() => { contentRefresh = null; });
-  }
-  return contentRefresh;
 }
 
 // "0.2" = الزرار رقم 0 جواه الزرار رقم 2. الجذر = ""
@@ -313,7 +233,7 @@ function render(node, path, hidePhoneBtn = false) {
 async function renderFor(ctx, node, path) {
   let hide = false;
   if (path === "" && phoneFeatureEnabled() && ctx.chat?.id) {
-    if (ctx._phoneShared === undefined) ctx._phoneShared = await hasPhoneForUpdate(ctx.chat.id);
+    if (ctx._phoneShared === undefined) ctx._phoneShared = await hasPhone(ctx.chat.id).catch(() => false);
     hide = ctx._phoneShared;
   }
   return render(node, path, hide);
@@ -338,8 +258,8 @@ const sendPhonePrompt = (ctx, m = {}) => ctx.reply(toHtml(m.phonePrompt || DEFAU
 async function maybePromptPhone(ctx) {
   try {
     if (!phoneFeatureEnabled() || ctx.chat?.type !== "private" || !ctx.from) return;
-    if (!(await withFirestoreCheckTimeout(phonePromptDue(ctx.chat.id), "phone prompt check"))) return;
-    if (await withFirestoreCheckTimeout(isBanned(ctx.chat.id), "ban check")) return;
+    if (!(await phonePromptDue(ctx.chat.id))) return;
+    if (await isBanned(ctx.chat.id)) return;
     const m = (await getContent().catch(() => ({}))).messages || {};
     await sendPhonePrompt(ctx, m);
   } catch (e) { console.error("[phone] prompt failed:", e?.message); }
@@ -379,12 +299,12 @@ bot.on("message:contact", async (ctx) => {
 
 // زرار القايمة الرئيسية: مشاركة الرقم لاحقاً
 bot.callbackQuery("sharephone", async (ctx) => {
-  await safeAnswerCallbackQuery(ctx);
-  if (await isBannedForUpdate(ctx.chat.id)) return;
+  await ctx.answerCallbackQuery();
+  try { if (await isBanned(ctx.chat.id)) return; } catch {}
   if (!phoneFeatureEnabled() || ctx.chat?.type !== "private") return;
   const m = (await getContent().catch(() => ({}))).messages || {};
   try { await claimPhonePrompt(ctx.chat.id); } catch {}   // علشان الطلب التلقائي ما يظهرش بعد كده
-  if (await hasPhoneForUpdate(ctx.chat.id)) return ctx.reply(toHtml(m.phoneAlready || DEFAULT_PHONE_ALREADY), HTML_OPTS((await renderFor(ctx, await getContent(), "")).markup));
+  if (await hasPhone(ctx.chat.id).catch(() => false)) return ctx.reply(toHtml(m.phoneAlready || DEFAULT_PHONE_ALREADY), HTML_OPTS((await renderFor(ctx, await getContent(), "")).markup));
   return sendPhonePrompt(ctx, m);
 });
 
@@ -411,22 +331,23 @@ bot.command("notify", async (ctx) => {
 });
 
 bot.command("start", async (ctx) => {
-  if (await isBannedForUpdate(ctx.chat.id)) return;
-  const { text, markup } = render(await getContent(), "", false);
+  try { if (await isBanned(ctx.chat.id)) return; } catch {}
+  const { text, markup } = await renderFor(ctx, await getContent(), "");
   await ctx.reply(toHtml(text), HTML_OPTS(markup));
+  await maybePromptPhone(ctx);
 });
 
 async function showNode(ctx, path, track) {
-  if (await isBannedForUpdate(ctx.chat.id)) { await safeAnswerCallbackQuery(ctx); return; }
+  try { if (await isBanned(ctx.chat.id)) { await ctx.answerCallbackQuery(); return; } } catch {}
   try {
     const node = getNode(await getContent(), path);
     const { text, markup } = await renderFor(ctx, node, path);
-    await safeAnswerCallbackQuery(ctx);
+    await ctx.answerCallbackQuery();
     await sendNodeVideo(ctx, node);
     await ctx.reply(toHtml(text), HTML_OPTS(markup));
     await maybePromptPhone(ctx);
   } catch {
-    await safeAnswerCallbackQuery(ctx, { text: "المحتوى اتغير، ابعت /start", show_alert: true });
+    await ctx.answerCallbackQuery({ text: "المحتوى اتغير، ابعت /start", show_alert: true });
   }
 }
 
@@ -504,7 +425,7 @@ async function showChoices(ctx, hits, content, m, withSendAnyway) {
 
 // العميل قال "ده مش قصدي": نسجل السؤال المعلّق
 bot.callbackQuery("pq", async (ctx) => {
-  await safeAnswerCallbackQuery(ctx);
+  await ctx.answerCallbackQuery();
   try { if (await isBanned(ctx.chat.id)) return; } catch {}
   let text = null;
   try { text = await takePending(ctx.chat.id); } catch {}
@@ -521,21 +442,15 @@ bot.callbackQuery("pq", async (ctx) => {
 bot.callbackQuery(/^ask:(.*)$/, async (ctx) => {
   const path = ctx.match[1];
   try {
-    if (await isBannedForUpdate(ctx.chat.id)) { await safeAnswerCallbackQuery(ctx); return; }
+    try { if (await isBanned(ctx.chat.id)) { await ctx.answerCallbackQuery(); return; } } catch {}
     const content = await getContent();
     const node = getNode(content, path);
-    await safeAnswerCallbackQuery(ctx);
+    await ctx.answerCallbackQuery();
     const intake = await getIntake().catch(() => ({ enabled: true }));
     if (!intake.enabled) {   // الزرار ظاهر، لكن بنعتذر بدل ما نفتح خانة السؤال
       return ctx.reply(toHtml(intake.message || DEFAULT_INTAKE_MESSAGE), HTML_OPTS((await renderFor(ctx, content, "")).markup));
     }
-    let left = null;
-    try {
-      left = await withFirestoreCheckTimeout(questionsLeft(ctx.chat.id), "question limit check");
-    } catch (e) {
-      console.error("[questions] limit check failed; allowing question prompt:", e?.message || e);
-    }
-    if (left !== null && left <= 0) {
+    if ((await questionsLeft(ctx.chat.id)) <= 0) {
       const lm = content.messages?.limitReached || DEFAULT_LIMIT;
       return ctx.reply(fill(lm, { max: MAX_QUESTIONS_COUNT }), HTML_OPTS((await renderFor(ctx, content, "")).markup));
     }
@@ -543,7 +458,7 @@ bot.callbackQuery(/^ask:(.*)$/, async (ctx) => {
       reply_markup: { force_reply: true, input_field_placeholder: "اكتب سؤالك..." },
     });
   } catch {
-    await safeAnswerCallbackQuery(ctx, { text: "المحتوى اتغير، ابعت /start", show_alert: true });
+    await ctx.answerCallbackQuery({ text: "المحتوى اتغير، ابعت /start", show_alert: true });
   }
 });
 
