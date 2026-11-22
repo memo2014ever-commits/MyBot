@@ -1,19 +1,14 @@
 // سجل العملاء (تدريجي / Lazy) + مشاركة رقم الهاتف المشفّر
-// - لا يوجد ترحيل جماعي: العميل القديم بدون حالة = phone_not_requested، وتتسجل حالته عند أول تفاعل له فقط.
-// - رقم الهاتف بيتخزن مشفّر AES-256-GCM بمفتاح من متغير البيئة PHONE_ENC_KEY (مش في الكود ولا GitHub).
-// - مفيش أي طباعة لأرقام الهواتف في الـ logs.
 import { createCipheriv, createDecipheriv, randomBytes } from "crypto";
 import { firestoreCommand } from "./firebase.js";
 import { cairoDayOf } from "./stats.js";
 
-// ثلاث مجموعات حقول (كل مجموعة: chatId -> قيمة)
-const INFO = "cu:info";   // JSON: { n: الاسم, u: username, fs: أول تفاعل مسجل (ms), pt: وقت مشاركة الرقم }
-const PHS = "cu:phs";     // الحالة: phone_shared | phone_skipped | phone_prompted (الغياب = phone_not_requested)
-const PH = "cu:ph";       // رقم الهاتف المشفّر
+const INFO = "cu:info";
+const PHS = "cu:phs";
+const PH = "cu:ph";
 
 export const PHONE_STATES = ["phone_shared", "phone_skipped", "phone_prompted", "phone_not_requested"];
 
-// ---------- التشفير ----------
 function loadKey() {
   const raw = (process.env.PHONE_ENC_KEY || "").trim();
   if (!raw) return null;
@@ -22,17 +17,14 @@ function loadKey() {
     return buf.length === 32 ? buf : null;
   } catch { return null; }
 }
-// الميزة كلها بتشتغل بس لو المفتاح موجود وصحيح (32 بايت). غير كده: مفيش طلب رقم ولا تخزين.
 export const phoneFeatureEnabled = () => loadKey() !== null;
-// حالة الهاتف لا تتغير أثناء تصفح القوائم؛ التعديل/المشاركة يمسحان الكاش فوراً.
-// مدة أطول تمنع قراءة HEXISTS مع كل عودة للقائمة الرئيسية.
-const PHONE_CACHE_MS = 5 * 60 * 1000;
+
+const PHONE_CACHE_MS = 48 * 60 * 60 * 1000;
+const CUSTOMER_CACHE_MS = 48 * 60 * 60 * 1000;
 const phoneDueCache = new Map();
 const phoneExistsCache = new Map();
 function trimPhoneCache(cache) { if (cache.size > 20000) cache.clear(); }
-// كاش بيانات العميل للوحة (الاسم/حالة الرقم) دقيقتين، بدل 3 قراءات لكل عميل في كل تحديث
 const customerRawCache = new Map();
-const CUSTOMER_CACHE_MS = 2 * 60 * 1000;
 function invalidatePhoneCache(id) { phoneDueCache.delete(String(id)); phoneExistsCache.delete(String(id)); customerRawCache.delete(String(id)); }
 
 export function encryptPhone(chatId, phone) {
@@ -40,12 +32,11 @@ export function encryptPhone(chatId, phone) {
   if (!key) throw new Error("PHONE_ENC_KEY missing or invalid");
   const iv = randomBytes(12);
   const c = createCipheriv("aes-256-gcm", key, iv);
-  c.setAAD(Buffer.from(String(chatId)));   // الرقم مربوط بمعرف صاحبه: نقله لعميل تاني بيفشل في فك التشفير
+  c.setAAD(Buffer.from(String(chatId)));
   const ct = Buffer.concat([c.update(String(phone), "utf8"), c.final()]);
   return ["v1", iv.toString("base64url"), c.getAuthTag().toString("base64url"), ct.toString("base64url")].join(".");
 }
 
-// بيرجع الرقم أو null لو فشل فك التشفير (مفتاح غلط/بيانات تالفة). مبيرميش خطأ ومبيطبعش الرقم.
 export function decryptPhone(chatId, blob) {
   try {
     const key = loadKey();
@@ -59,7 +50,6 @@ export function decryptPhone(chatId, blob) {
   } catch { return null; }
 }
 
-// "+20 100 123 4567" -> "+201001234567" ، ويرفض اللي مش رقم منطقي (7-15 رقم حسب E.164)
 export function normalizePhone(p) {
   const digits = String(p ?? "").replace(/\D/g, "");
   return digits.length >= 7 && digits.length <= 15 ? "+" + digits : null;
@@ -69,8 +59,6 @@ const validId = (id) => /^\d{1,20}$/.test(String(id ?? ""));
 const parse = (s) => { try { return s ? JSON.parse(s) : null; } catch { return null; } };
 const fullName = (from) => [from?.first_name, from?.last_name].filter(Boolean).join(" ").slice(0, 150);
 
-// ---------- سجل العميل (الاسم / username / أول تفاعل) ----------
-// بيحفظ أول تفاعل مرة واحدة فقط (fs)، ويحدّث الاسم والـ username لو اتغيروا
 export async function upsertInfo(from, extra = {}, now = Date.now()) {
   if (!from || !validId(from.id)) return;
   const id = String(from.id);
@@ -79,11 +67,6 @@ export async function upsertInfo(from, extra = {}, now = Date.now()) {
   if (JSON.stringify(next) !== JSON.stringify(cur)) await firestoreCommand(["HSET", INFO, id, JSON.stringify(next)]);
 }
 
-// ---------- حالة مشاركة الرقم + جدول التذكير ----------
-// القيمة المخزنة في cu:phs:  الحالة|عدد مرات الظهور|وقت آخر ظهور|وقت بداية الدورة   (والقيم القديمة بدون | بتتقرأ عادي)
-//  - phone_prompted (تجاهل الطلب): يظهر في أول تفاعل بعد كل 24 ساعة، لحد 5 مرات.
-//  - phone_skipped (ضغط "بدون مشاركة"): يتذكّر كل 3 أيام لمدة 30 يوم من وقت اختياره، وبعدها يقف والزرار يفضل اختياري.
-//  - phone_shared: مفيش طلب تاني.
 export const PROMPT_POLICY = {
   ignoredMax: 5, ignoredEveryMs: 24 * 3600e3,
   skippedEveryMs: 3 * 24 * 3600e3, skippedWindowMs: 30 * 24 * 3600e3,
@@ -96,7 +79,6 @@ function parseState(v) {
 }
 const enc = (state, count, last, start) => `${state}|${count}|${last}|${start}`;
 
-// بيرجع true لو لازم نعرض الطلب للعميل دلوقتي (وبيسجّل الظهور). مفيش طلب لأي عميل بيحصل أكتر من مرة في نفس اللحظة.
 export async function phonePromptDue(chatId, now = Date.now()) {
   if (!validId(chatId)) return false;
   const id = String(chatId);
@@ -110,21 +92,17 @@ export async function phonePromptDue(chatId, now = Date.now()) {
 
 async function phonePromptDueUncached(id, now) {
   const cur = parseState(await firestoreCommand(["HGET", PHS, id]));
-  // أول ظهور: HSETNX ذري (يرجع 1 لطلب واحد بس حتى لو جت رسايل كتير مع بعض)
   if (!cur) return (await firestoreCommand(["HSETNX", PHS, id, enc("phone_prompted", 1, now, now)])) === 1;
   if (cur.state === "phone_shared") return false;
-  // سجل قديم من قبل جدول التذكير: نبدأ العدّ من دلوقتي من غير ما نظهر الطلب فجأة
   if (!cur.last) { await firestoreCommand(["HSET", PHS, id, enc(cur.state, cur.count || 1, now, cur.start || now)]); return false; }
   let due = false;
   if (cur.state === "phone_prompted") due = cur.count < PROMPT_POLICY.ignoredMax && now - cur.last >= PROMPT_POLICY.ignoredEveryMs;
   else if (cur.state === "phone_skipped") due = now - cur.start <= PROMPT_POLICY.skippedWindowMs && now - cur.last >= PROMPT_POLICY.skippedEveryMs;
   if (!due) return false;
-  // قفل قصير يمنع تكرار الطلب لو جت رسالتين في نفس اللحظة
   if ((await firestoreCommand(["SET", `pl:${id}`, "1", "NX", "EX", 60])) !== "OK") return false;
   return (await firestoreCommand(["HSET", PHS, id, enc(cur.state, cur.count + 1, now, cur.start || now)])) !== null;
 }
 
-// ضغط زرار القايمة الرئيسية: يتسجل إن الطلب اتعرض (من غير ما يلغي أي جدول موجود)
 export async function claimPhonePrompt(chatId, now = Date.now()) {
   if (!validId(chatId)) return false;
   invalidatePhoneCache(chatId);
@@ -141,7 +119,6 @@ export async function hasPhone(chatId) {
   return value;
 }
 
-// بيحفظ الرقم مشفّر. بيرجع true بس لو الكتابة نجحت فعلاً
 export async function savePhone(from, phone) {
   if (!from || !validId(from.id)) return false;
   const id = String(from.id);
@@ -153,28 +130,24 @@ export async function savePhone(from, phone) {
   return true;
 }
 
-// "الاستمرار بدون مشاركة": ما بيلغيش رقم محفوظ فعلاً
 export async function skipPhone(from) {
   if (!from || !validId(from.id)) return false;
   const id = String(from.id);
   invalidatePhoneCache(id);
   if (await hasPhone(id)) return true;
   const now = Date.now(), cur = parseState(await firestoreCommand(["HGET", PHS, id]));
-  // ضغطة "بدون مشاركة": بداية دورة التذكير كل 3 أيام (ولو كان متخطي قبل كده نحتفظ ببداية الدورة)
   const keep = cur && cur.state === "phone_skipped" && cur.start;
   const r = await firestoreCommand(["HSET", PHS, id, enc("phone_skipped", keep ? cur.count : 0, now, keep ? cur.start : now)]);
   await upsertInfo(from).catch(() => {});
   return r !== null;
 }
 
-// ---------- قراءة للوحة الإدارة ----------
 function stateOf(stored, hasPh) {
   if (hasPh) return "phone_shared";
   const b = baseState(stored);
   return PHONE_STATES.includes(b) && b !== "phone_shared" ? b : "phone_not_requested";
 }
 
-// بيانات مجموعة عملاء (للأسئلة): 3 استعلامات مجمعة مهما كان العدد
 export async function customerMap(ids, { withPhones = false } = {}) {
   const list = [...new Set(ids.map(String).filter(validId))];
   const out = {};
@@ -203,20 +176,18 @@ export async function customerMap(ids, { withPhones = false } = {}) {
 
 function toObj(arr) { const o = {}; for (let i = 0; i < (arr?.length || 0); i += 2) o[arr[i]] = arr[i + 1]; return o; }
 
-// كل العملاء المعروفين: اللي ليهم سجل + أصحاب الأسئلة (حتى لو قدامى بدون سجل بعد)
-// كل صفحة/بحث/فلتر في تاب العملاء: تم تحسينه لمنع قراءة cu:ph بالكامل (HGETALL PH) لتوفير آلاف القراءات
 let hashesCache = { t: 0, v: null, p: null };
 async function loadCustomerHashes() {
   const now = Date.now();
   if (hashesCache.v && now - hashesCache.t < CUSTOMER_CACHE_MS) return hashesCache.v;
   if (hashesCache.p) return hashesCache.p;
-  // نكتفي بـ INFO و PHS فقط؛ قراءة PH محذوفة تماماً لمنع قراءة النصوص المشفرة غير المعروضة
   const p = Promise.all([firestoreCommand(["HGETALL", INFO]), firestoreCommand(["HGETALL", PHS])])
     .then(([infoA, phsA]) => { hashesCache = { t: Date.now(), v: { infoA, phsA, phA: [] }, p: null }; return hashesCache.v; })
     .catch((e) => { hashesCache.p = null; throw e; });
   hashesCache.p = p;
   return p;
 }
+
 export async function listCustomers({ questions = [], filter = "all", q = "", withPhones = false } = {}) {
   const { infoA, phsA } = await loadCustomerHashes();
   const infos = toObj(infoA), states = toObj(phsA);
@@ -229,7 +200,7 @@ export async function listCustomers({ questions = [], filter = "all", q = "", wi
     const c = ensure(String(x.chatId));
     if (!c.name && x.customerName) c.name = x.customerName;
     if (!c.username && x.username) c.username = x.username;
-    if (!c.firstSeen || x.t < c.firstSeen) c.firstSeen = x.t;   // أقدم سؤال = أقدم تفاعل معروف
+    if (!c.firstSeen || x.t < c.firstSeen) c.firstSeen = x.t;
   });
   const needle = String(q || "").trim().toLowerCase().replace(/^@/, "");
   let rows = Object.values(byId).map((c) => {
@@ -258,7 +229,6 @@ export async function phoneSharedCount() {
   return Number((await firestoreCommand(["HLEN", PH])) ?? 0) || 0;
 }
 
-// عدد اللي شاركوا أرقامهم في يوم محدد (يعاد استخدام الكاش لتوفير HGETALL إضافية)
 export async function phonesSharedOnDay(date) {
   const { infoA } = await loadCustomerHashes().catch(() => ({ infoA: [] }));
   const o = toObj(infoA || []);
