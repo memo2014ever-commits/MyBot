@@ -135,7 +135,7 @@ export async function getQuestionsVersion() {
 let qCache = { t: 0, list: null, p: null };
 export function invalidateQuestionsCache() { qCache = { t: 0, list: null, p: null }; }
 export function seedQuestionsCache(list) { qCache = { t: Date.now(), list, p: null }; }
-export async function getQuestionsCached(maxAgeMs = 60 * 1000) {
+export async function getQuestionsCached(maxAgeMs = 48 * 60 * 60 * 1000) {
   const now = Date.now();
   if (qCache.list && now - qCache.t < maxAgeMs) return qCache.list;
   if (qCache.p) return qCache.p;
@@ -143,9 +143,8 @@ export async function getQuestionsCached(maxAgeMs = 60 * 1000) {
   qCache.p = p;
   return p;
 }
+
 // إحصائيات حالات الأسئلة. كل سؤال أصلي بيتعد مرة واحدة (بالـ id)، والمتابعات جوه السؤال نفسه فمش بتتعد كأسئلة.
-// الحالات الموجودة فعلاً: open (جديد) / followup_pending (متابعة بانتظار رد الإدارة) / awaiting_followup (تم الرد، بانتظار العميل)
-// / archived (مغلق) / answered (قديم، بيظهر في الأرشيف). أي سؤال بدون حالة = open (زي ما اللوحة بتتعامل معاه).
 export function computeQuestionStats(list) {
   const seen = new Set();
   const c = { total: 0, open: 0, followupPending: 0, awaitingCustomer: 0, closed: 0, legacyAnswered: 0, other: 0, closedTimeout: 0, closedMaxFollowups: 0, closedManual: 0 };
@@ -160,7 +159,6 @@ export function computeQuestionStats(list) {
     else if (st === "awaiting_followup") c.awaitingCustomer++;
     else if (st === "archived") {
       c.closed++;
-      // سبب الإغلاق: انتهت المهلة / وصل للحد / يدوي. (القديم اللي مالوش سبب مسجّل بيتحسب ضمن اليدوي)
       if (x.closeReason === "timeout") c.closedTimeout++;
       else if (x.closeReason === "max_followups") c.closedMaxFollowups++;
       else c.closedManual++;
@@ -168,7 +166,6 @@ export function computeQuestionStats(list) {
     else if (st === "answered") c.legacyAnswered++;
     else c.other++;
   }
-  // الأرشيف = اللي بيظهر في تاب الأرشيف: المغلقة + القديمة المُجاب عنها
   return { ...c, archiveTotal: c.closed + c.legacyAnswered };
 }
 
@@ -178,11 +175,9 @@ export const FOLLOWUP_WINDOW_MS = 24 * 60 * 60 * 1000;
 export const MAX_FOLLOWUPS = 10;
 
 // ==================== سجل العميل وحد المتابعات الإضافي ====================
-// الزيادة مرتبطة بمعرف تيليجرام للعميل (حقل داخل hash باسم fu:extra)، والحد الافتراضي MAX_FOLLOWUPS لا يتغير.
-// أي عميل بدون سجل = إضافي 0 (قيمة افتراضية آمنة للبيانات القديمة).
 export const MAX_EXTRA_PER_OPERATION = 100;
 const validChatId = (id) => /^\d{1,20}$/.test(String(id ?? ""));
-const EXTRA_KEY = "fu:extra";   // hash واحد: chatId -> عدد المتابعات الإضافية (أمر واحد لقراءة الكل في اللوحة)
+const EXTRA_KEY = "fu:extra";
 
 export async function getExtraFollowups(chatId) {
   if (!validChatId(chatId)) return 0;
@@ -196,16 +191,18 @@ export async function getAllExtras() {
 }
 export const followupLimitFor = (extra = 0) => MAX_FOLLOWUPS + Math.max(0, Number(extra) || 0);
 
-// ---- حد المتابعات لكل سؤال ----
-// الحد الفعلي للسؤال = 10 (الافتراضي) + extraFollowups المخزنة على السؤال نفسه (بتنتهي بانتهاء السؤال)
-//                    + الإضافي الدائم القديم للعميل (fu:extra، بيتحذف من نافذة الحد، ومبيتضافش عليه تاني).
 export const limitForItem = (item, permanent = 0) =>
   MAX_FOLLOWUPS + Math.max(0, Number(permanent) || 0) + Math.max(0, Number(item?.extraFollowups) || 0);
 const ACTIVE_STATUSES = ["open", "awaiting_followup", "followup_pending"];
 
-// أحدث سؤال للعميل (القائمة من الأحدث للأقدم)
+// أحدث سؤال للعميل (القائمة من الأحدث للأقدم) - نبحث في أول 100 سؤال أولاً لتقليل القراءات
 async function latestQuestionOf(chatId) {
-  const raw = (await firestoreCommand(["LRANGE", "questions", 0, -1])) || [];
+  let raw = (await firestoreCommand(["LRANGE", "questions", 0, 99])) || [];
+  for (let i = 0; i < raw.length; i++) {
+    let item; try { item = JSON.parse(raw[i]); } catch { continue; }
+    if (String(item.chatId) === String(chatId)) return { index: i, item };
+  }
+  raw = (await firestoreCommand(["LRANGE", "questions", 0, -1])) || [];
   for (let i = 0; i < raw.length; i++) {
     let item; try { item = JSON.parse(raw[i]); } catch { continue; }
     if (String(item.chatId) === String(chatId)) return { index: i, item };
@@ -228,7 +225,6 @@ export async function followupLimitState(chatId) {
   };
 }
 
-// add / sub / clear على سؤال العميل الشغّال (أو آخر سؤال اتقفل بسبب الحد، فبيتفتح). مبيمسّش أي سؤال تاني.
 export async function adjustQuestionExtra(chatId, op, amount = 0, now = Date.now()) {
   if (!validChatId(chatId)) return { error: "معرف العميل غير صحيح" };
   if (!["add", "sub", "clear"].includes(op)) return { error: "عملية غير معروفة" };
@@ -256,7 +252,6 @@ export async function adjustQuestionExtra(chatId, op, amount = 0, now = Date.now
   return { ok: true, questionId: item.id, prevLimit, newLimit, delta: next - cur, reopened: reopen && updated.status === "awaiting_followup" };
 }
 
-// حذف الإضافي الدائم القديم للعميل (اللي اتعمل قبل ما الزيادة تبقى للسؤال الحالي)
 export async function clearPermanentExtra(chatId) {
   if (!validChatId(chatId)) return { error: "معرف العميل غير صحيح" };
   const prev = await getExtraFollowups(chatId);
@@ -266,23 +261,19 @@ export async function clearPermanentExtra(chatId) {
   return { ok: true, prevExtra: prev, prevLimit: MAX_FOLLOWUPS + prev, newLimit: MAX_FOLLOWUPS, delta: -prev };
 }
 
-
-// منع تكرار نفس العملية لو الطلب اتبعت مرتين (requestId من الواجهة)
 export async function claimOperation(requestId) {
   if (typeof requestId !== "string" || !/^[A-Za-z0-9-]{8,64}$/.test(requestId)) return false;
   return (await firestoreCommand(["SET", `op:${requestId}`, "1", "NX", "EX", 600])) === "OK";
 }
 
-// سجل عمليات زيادة الحد (بيتحفظ كامل، من غير مسح)
 export async function logLimitChange(entry) {
   await firestoreCommand(["LPUSH", "followup_log", JSON.stringify(entry)]);
 }
 export async function getLimitLog(chatId = null) {
-  const raw = (await firestoreCommand(["LRANGE", "followup_log", 0, -1])) || [];
+  const raw = (await firestoreCommand(["LRANGE", "followup_log", 0, 49])) || [];
   const all = raw.map((r) => { try { return JSON.parse(r); } catch { return null; } }).filter(Boolean);
   return chatId ? all.filter((e) => String(e.chatId) === String(chatId)) : all;
 }
-
 
 export async function closeExpiredQuestions(now = Date.now(), rawOverride = null) {
   const raw = rawOverride || (await firestoreCommand(["LRANGE", "questions", 0, -1])) || [];
@@ -304,7 +295,6 @@ export async function closeExpiredQuestions(now = Date.now(), rawOverride = null
   return closed;
 }
 
-// لوحة الأسئلة تحتاج القائمة نفسها؛ نقرأها مرة واحدة ونغلق المنتهية ضمن نفس المرور.
 export async function getQuestionsAndCloseExpired(now = Date.now()) {
   const raw = (await firestoreCommand(["LRANGE", "questions", 0, -1])) || [];
   const expired = await closeExpiredQuestions(now, raw);
@@ -312,10 +302,16 @@ export async function getQuestionsAndCloseExpired(now = Date.now()) {
 }
 
 export async function closeQuestion(ref, reason = "manual") {
-  const raw = (await firestoreCommand(["LRANGE", "questions", 0, -1])) || [];
-  const index = raw.findIndex((r) => {
+  let raw = (await firestoreCommand(["LRANGE", "questions", 0, 99])) || [];
+  let index = raw.findIndex((r) => {
     try { return JSON.parse(r).id === ref || r === ref; } catch { return r === ref; }
   });
+  if (index < 0) {
+    raw = (await firestoreCommand(["LRANGE", "questions", 0, -1])) || [];
+    index = raw.findIndex((r) => {
+      try { return JSON.parse(r).id === ref || r === ref; } catch { return r === ref; }
+    });
+  }
   if (index < 0) return null;
   const item = JSON.parse(raw[index]);
   if (item.status === "archived") return { ...item, raw: raw[index] };
@@ -325,7 +321,6 @@ export async function closeQuestion(ref, reason = "manual") {
 }
 
 export async function questionForReply(chatId, messageId, now = Date.now()) {
-  // المتابعات تكون على أسئلة حديثة خلال 24 ساعة، فنبحث أولاً في أحدث 50 سؤالاً لتوفير مئات القراءات
   const searchLimit = 50;
   const rawRecent = (await firestoreCommand(["LRANGE", "questions", 0, searchLimit - 1])) || [];
   for (let i = 0; i < rawRecent.length; i++) {
@@ -335,7 +330,6 @@ export async function questionForReply(chatId, messageId, now = Date.now()) {
       if ((item.answerMessageIds || []).map(Number).includes(Number(messageId))) return { ...item, raw: rawRecent[i], index: i };
     } catch {}
   }
-  // كإجراء احتياطي فقط لو كان هناك أسئلة كثيرة جداً غير معتادة خلال نفس اليوم
   const rawNext = (await firestoreCommand(["LRANGE", "questions", searchLimit, searchLimit * 2 - 1])) || [];
   for (let i = 0; i < rawNext.length; i++) {
     try {
@@ -348,16 +342,22 @@ export async function questionForReply(chatId, messageId, now = Date.now()) {
 }
 
 export async function addFollowup(ref, text, attachments = [], now = Date.now()) {
-  // فحص أول 50 سؤالاً أولاً لأن المتابعة تكون على سؤال حديث
   let raw = (await firestoreCommand(["LRANGE", "questions", 0, 49])) || [];
   let index = raw.findIndex((r) => {
     try { return JSON.parse(r).id === ref || r === ref; } catch { return r === ref; }
   });
   if (index < 0) {
-    raw = (await firestoreCommand(["LRANGE", "questions", 0, -1])) || [];
-    index = raw.findIndex((r) => {
+    raw = (await firestoreCommand(["LRANGE", "questions", 50, 149])) || [];
+    const idx2 = raw.findIndex((r) => {
       try { return JSON.parse(r).id === ref || r === ref; } catch { return r === ref; }
     });
+    if (idx2 >= 0) index = 50 + idx2;
+    else {
+      raw = (await firestoreCommand(["LRANGE", "questions", 0, -1])) || [];
+      index = raw.findIndex((r) => {
+        try { return JSON.parse(r).id === ref || r === ref; } catch { return r === ref; }
+      });
+    }
   }
   if (index < 0) return null;
   const item = JSON.parse(raw[index]);
@@ -376,7 +376,6 @@ export async function addFollowup(ref, text, attachments = [], now = Date.now())
 
 export async function getQuestionById(questionId) {
   if (!questionId) return null;
-  // فحص أول 50 سؤالاً أولاً (حيث تكون الأسئلة النشطة بانتظار الرد) لتوفير القراءات
   let raw = (await firestoreCommand(["LRANGE", "questions", 0, 49])) || [];
   for (let i = 0; i < raw.length; i++) {
     try {
@@ -384,7 +383,6 @@ export async function getQuestionById(questionId) {
       if (item.id === questionId || raw[i] === questionId) return item;
     } catch {}
   }
-  // فحص الـ 50 التالية كاحتياط
   raw = (await firestoreCommand(["LRANGE", "questions", 50, 99])) || [];
   for (let i = 0; i < raw.length; i++) {
     try {
@@ -392,7 +390,6 @@ export async function getQuestionById(questionId) {
       if (item.id === questionId || raw[i] === questionId) return item;
     } catch {}
   }
-  // احتياطي أخير لو كان السؤال أقدم
   raw = (await firestoreCommand(["LRANGE", "questions", 0, -1])) || [];
   for (let i = 0; i < raw.length; i++) {
     try {
@@ -404,7 +401,6 @@ export async function getQuestionById(questionId) {
 }
 
 export async function answerQuestion(ref, answer, telegramMessageId = null) {
-  // فحص أول 50 سؤالاً أولاً لتجنب قراءة كل السجل
   let raw = (await firestoreCommand(["LRANGE", "questions", 0, 49])) || [];
   let index = raw.findIndex((r) => {
     try { return JSON.parse(r).id === ref || r === ref; } catch { return r === ref; }
@@ -449,10 +445,16 @@ export async function answerQuestion(ref, answer, telegramMessageId = null) {
 }
 
 export async function updateAnswerHistory(ref, historyIndex, answer, telegramMessageId = null) {
-  const raw = (await firestoreCommand(["LRANGE", "questions", 0, -1])) || [];
-  const index = raw.findIndex((r) => {
+  let raw = (await firestoreCommand(["LRANGE", "questions", 0, 99])) || [];
+  let index = raw.findIndex((r) => {
     try { return JSON.parse(r).id === ref || r === ref; } catch { return r === ref; }
   });
+  if (index < 0) {
+    raw = (await firestoreCommand(["LRANGE", "questions", 0, -1])) || [];
+    index = raw.findIndex((r) => {
+      try { return JSON.parse(r).id === ref || r === ref; } catch { return r === ref; }
+    });
+  }
   if (index < 0) return null;
   const item = JSON.parse(raw[index]);
   const history = Array.isArray(item.answerHistory) && item.answerHistory.length
@@ -519,7 +521,6 @@ export async function getStatsByDay(date) {
   return { date, hours, presses: sum(byPath), byPath, peak: peakHour(hours) };
 }
 
-// ملخص يوم محدد للكروت العلوية: مشتركون جدد / نشطون / ضغطات / وقت الذروة
 export async function getOverviewDay(date) {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) throw new Error("تاريخ غير صحيح");
   const [newSubs, active, day] = await Promise.all([
@@ -528,7 +529,6 @@ export async function getOverviewDay(date) {
   return { date, newSubs: newSubs ?? 0, active: active ?? 0, presses: day.presses, peak: day.peak };
 }
 
-// التصفير يظل يدويًا فقط، ويمسح كل المفاتيح التاريخية المطابقة بدون حد 90 يومًا.
 function sum(o) { return Object.values(o).reduce((a, b) => a + b, 0); }
 function toObj(arr) { const o = {}; for (let i = 0; i < (arr?.length || 0); i += 2) o[arr[i]] = Number(arr[i + 1]); return o; }
 
@@ -558,11 +558,8 @@ export async function unbanUser(chatId) {
   }
 }
 
-// في الوضع الحالي لا توجد حظورات. نتحقق من ذلك مرة كل 24 ساعة لكل نسخة
-// تشغيل، ثم نتجاوز Firestore تماماً أثناء تصفح القوائم في بقية المدة.
-// إذا وُجد حظر، نرجع لفحص مستند العميل فقط، ولا نقرأ القائمة كاملة لكل ضغطة.
-const NO_BANS_RECHECK_MS = 24 * 60 * 60 * 1000;
-const BAN_DECISION_CACHE_MS = 30 * 1000;
+const NO_BANS_RECHECK_MS = 48 * 60 * 60 * 1000;
+const BAN_DECISION_CACHE_MS = 48 * 60 * 60 * 1000;
 const banDecisionCache = new Map();
 let noBansCheckedAt = 0;
 let noBansUntil = 0;
