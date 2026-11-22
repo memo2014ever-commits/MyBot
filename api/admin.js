@@ -1,5 +1,4 @@
 // خادم لوحة التحكم: تسجيل دخول بدورين (أدمن / محرر)، وقراءة وحفظ وسجل نسخ من GitHub
-// كل الأسرار في متغيرات البيئة في Vercel، ومش ظاهرة للمتصفح
 import { timingSafeEqual, createHash } from "crypto";
 import { firestoreCommand } from "./firebase.js";
 import { getStats, getStatsByDay, getOverviewDay, getQuestions, getQuestionsVersion, getQuestionsCached, seedQuestionsCache, invalidateQuestionsCache, todayKey, getQuestionsAndCloseExpired, deleteQuestion, answerQuestion, updateAnswerHistory, closeQuestion, banUser, unbanUser, getBans, getBanInfo,
@@ -10,8 +9,8 @@ import { registryCount, backfillRegistry, registeredOnDay } from "./registry.js"
 import { getNotifyConfig, setNotifyConfig, listNotifyChats, unlinkNotifyChat, createLinkCode, getNotifyLast, sendNotifyTest, botUsername, MAX_NOTIFY_CHATS, LINK_CODE_TTL } from "./notify.js";
 
 const {
-  ADMIN_USER, ADMIN_PASS,          // الأدمن: يعدّل ويحذف
-  EDITOR_USER, EDITOR_PASS,        // المحرر (اختياري): يعدّل ومايحذفش
+  ADMIN_USER, ADMIN_PASS,
+  EDITOR_USER, EDITOR_PASS,
   GITHUB_TOKEN, GITHUB_REPO,
   GITHUB_FILE = "content.json", GITHUB_BRANCH = "main",
   BOT_TOKEN,
@@ -29,7 +28,6 @@ function safeEq(a = "", b = "") {
   return A.length === B.length && timingSafeEqual(A, B);
 }
 
-// يرجع الدور: "admin" أو "editor" أو null
 function authenticate(u, p) {
   if (ADMIN_USER && safeEq(u, ADMIN_USER) && safeEq(p, ADMIN_PASS)) return "admin";
   if (EDITOR_USER && safeEq(u, EDITOR_USER) && safeEq(p, EDITOR_PASS)) return "editor";
@@ -60,7 +58,6 @@ function validate(node, isRoot = true, depth = 0) {
   return null;
 }
 
-// خطأ من خدمة خارجية (تيليجرام / GitHub / ImgBB) بسببه الحقيقي، علشان اللوحة تشرحه
 function extError(source, message, extra = {}) { return Object.assign(new Error(message), { source }, extra); }
 async function ghFetch(url, opts) {
   try { return await fetch(url, opts); } catch (e) { throw extError("github", e?.message || "network", { network: true }); }
@@ -107,9 +104,8 @@ async function sendCloseNotice(chatId, automatic = false, messages = {}) {
   await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ chat_id: chatId, text }) });
 }
 
-// كاش تقارير اللوحة (إحصائيات/أيام/عملاء) على السيرفر: الأرقام دي بتتحسب بقراءة آلاف المستندات في Firestore، فمفيش داعي نعيدها كل مرة.
-// أي إجراء تعديل من اللوحة بيمسح الكاش. وزرار "تحديث" في اللوحة بيتجاوزه.
-const REPORT_TTL_MS = 5 * 60 * 1000, PAST_DAY_TTL_MS = 60 * 60 * 1000;
+// كاش تقارير اللوحة (إحصائيات/أيام): 48 ساعة لتقليل القراءات المتكررة
+const REPORT_TTL_MS = 48 * 60 * 60 * 1000, PAST_DAY_TTL_MS = 48 * 60 * 60 * 1000;
 const reportCache = new Map();
 const cachedReport = (key, ttl) => { const e = reportCache.get(key); return e && Date.now() - e.t < ttl ? e.data : null; };
 const rememberReport = (key, data) => { if (reportCache.size > 200) reportCache.clear(); reportCache.set(key, { t: Date.now(), data }); return data; };
@@ -133,12 +129,10 @@ export default async function handler(req, res) {
     if (action === "stats") {
       if (req.body.force !== true) { const hit = cachedReport("stats", REPORT_TTL_MS); if (hit) return res.json(hit); }
       const st = await getStats();
-      // إحصائيات مشاركة الأرقام: بدون أي رقم هاتف. الإجمالي هو نفس "إجمالي المشتركين (تقريبي)" الموجود بالفعل
       const shared = await phoneSharedCount().catch(() => 0);
       const total = Math.max(Number(st.subscribersTotal) || 0, shared);
       st.questionStats = computeQuestionStats(await getQuestionsCached().catch(() => []));
       st.intake = await getIntake();
-      // قاعدة المشتركين المسجّلين بالـ ID (مختلفة عن "إجمالي المشتركين (تقريبي)" القديم)
       const regCount = await registryCount().catch(() => 0);
       st.registry = { count: regCount, coverage: Number(st.subscribersTotal) > 0 ? Math.min(100, Math.round((regCount / Number(st.subscribersTotal)) * 1000) / 10) : 0 };
       st.phones = {
@@ -158,7 +152,6 @@ export default async function handler(req, res) {
       return res.json(rememberReport(key, await getStatsByDay(ref)));
     }
 
-    // ملخص يوم محدد للكروت العلوية (قسم الإحصائيات)
     if (action === "overviewDay") {
       if (typeof ref !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(ref)) return res.status(400).json({ error: "تاريخ غير صحيح" });
       const key = `overviewDay:${ref}`, hit = cachedReport(key, dayTtl(ref));
@@ -166,7 +159,6 @@ export default async function handler(req, res) {
       return res.json(rememberReport(key, await getOverviewDay(ref)));
     }
 
-    // إحصائيات العملاء ليوم محدد: المشاركون بأرقامهم + المسجّلون بالـ ID
     if (action === "customersDay") {
       if (typeof ref !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(ref)) return res.status(400).json({ error: "تاريخ غير صحيح" });
       const key = `customersDay:${ref}`, hit = cachedReport(key, dayTtl(ref));
@@ -176,19 +168,15 @@ export default async function handler(req, res) {
     }
 
     if (action === "questions") {
-      // رقم النسخة بيتقرا قبل القايمة. لو اللوحة معاها نفس الرقم نرد "مفيش جديد" بقراءة واحدة بدل قراءة كل الأسئلة
       const ver = await getQuestionsVersion().catch(() => null);
       if (ver !== null && typeof req.body.ver === "number" && req.body.ver === ver && req.body.full !== true) return res.json({ unchanged: true, ver });
       const { questions, expired } = await getQuestionsAndCloseExpired();
       seedQuestionsCache(questions);
-      // نكلّم GitHub بس لو فيه أسئلة انتهت فعلاً (بدل كل تحديث): ده كان أكبر سبب لبطء الصفحة
       if (expired.length) {
         const systemMessages = (await readCurrent()).content.messages || {};
         await Promise.all(expired.map((x) => sendCloseNotice(x.chatId, true, systemMessages).catch(() => {})));
       }
-      // extras: زيادات حد المتابعات لكل عميل، والواجهة تحسب الحد = الافتراضي + الزيادة
       const [extras, intake] = await Promise.all([getAllExtras().catch(() => ({})), getIntake()]);
-      // بيانات أصحاب الأسئلة. رقم الهاتف للأدمن فقط
       const customers = await customerMap(questions.map((x) => x.chatId), { withPhones: role === "admin" }).catch(() => ({}));
       return res.json({ questions, customers, intake: { ...intake, defaultMessage: DEFAULT_INTAKE_MESSAGE }, phoneFeature: phoneFeatureEnabled(), extras, defaultFollowupLimit: MAX_FOLLOWUPS, ver });
     }
@@ -257,7 +245,6 @@ export default async function handler(req, res) {
       return res.json({ url: j.data.url });
     }
 
-    // ---------- مفتاح استقبال الأسئلة الجديدة ----------
     if (action === "getIntake") {
       return res.json({ ...(await getIntake()), defaultMessage: DEFAULT_INTAKE_MESSAGE });
     }
@@ -271,13 +258,11 @@ export default async function handler(req, res) {
       return res.json({ ok: true, ...(await getIntake()), defaultMessage: DEFAULT_INTAKE_MESSAGE });
     }
 
-    // ---------- قاعدة المشتركين: استيراد المعروفين دلوقتي (أدمن فقط) ----------
     if (action === "registryBackfill") {
       if (role !== "admin") return res.status(403).json({ error: "استيراد المشتركين للأدمن بس" });
       return res.json({ ok: true, ...(await backfillRegistry()) });
     }
 
-    // ---------- تنبيهات الموظفين على تيليجرام (أدمن فقط) ----------
     if (typeof action === "string" && action.startsWith("notify")) {
       if (role !== "admin") return res.status(403).json({ error: "إعدادات التنبيهات للأدمن بس" });
       if (action === "notifyGet") {
@@ -305,13 +290,10 @@ export default async function handler(req, res) {
       }
     }
 
-    // ---------- العملاء وأرقام الهواتف ----------
-    // القوائم لا تحتوي على أرقام هواتف أبداً. الرقم يظهر في customerDetail وبجوار الأسئلة للأدمن فقط
     if (action === "customers") {
       const filter = ["all", "shared", "notshared"].includes(req.body.filter) ? req.body.filter : "all";
       const q = typeof req.body.q === "string" ? req.body.q.slice(0, 60) : "";
       const rows = await listCustomers({ questions: await getQuestionsCached(), filter, q, withPhones: role === "admin" });
-      // تقسيم صفحات من السيرفر (50 عميل في الصفحة) علشان القايمة ما تطولش
       const PAGE = 50, pages = Math.max(1, Math.ceil(rows.length / PAGE));
       const page = Math.min(pages, Math.max(1, parseInt(req.body.page, 10) || 1));
       return res.json({ customers: rows.slice((page - 1) * PAGE, page * PAGE), total: rows.length, page, pages, pageSize: PAGE });
@@ -325,20 +307,18 @@ export default async function handler(req, res) {
       return res.json({ customer: { ...base, questionsCount: mine.length, extraFollowups: await getExtraFollowups(ref.trim()) }, canSeePhone: role === "admin" });
     }
 
-    // ---------- حد المتابعات لكل عميل (أدمن فقط، والتحقق هنا في السيرفر) ----------
     if (action === "followupLimitInfo") {
       if (role !== "admin") return res.status(403).json({ error: "تعديل حد المتابعات للأدمن بس" });
       if (typeof ref !== "string" || !/^\d{1,20}$/.test(ref.trim())) return res.status(400).json({ error: "معرف العميل غير صحيح" });
       const chatId = ref.trim();
       const st = await followupLimitState(chatId);
-      const mine = (await getQuestions()).filter((x) => String(x.chatId) === chatId);
+      const mine = (await getQuestionsCached()).filter((x) => String(x.chatId) === chatId);
       return res.json({
         chatId, customerName: mine.find((x) => x.customerName)?.customerName || "", defaultLimit: MAX_FOLLOWUPS,
         ...st, log: (await getLimitLog(chatId)).slice(0, 20),
       });
     }
 
-    // زيادة / نقص / حذف: بتخص السؤال الحالي للعميل وبتنتهي بانتهائه. "clearPermanent" بيحذف الإضافي الدائم القديم.
     if (action === "adjustFollowupLimit" || action === "increaseFollowupLimit") {
       if (role !== "admin") return res.status(403).json({ error: "تعديل حد المتابعات للأدمن بس" });
       if (typeof ref !== "string" || !/^\d{1,20}$/.test(ref.trim())) return res.status(400).json({ error: "معرف العميل غير صحيح" });
@@ -356,14 +336,13 @@ export default async function handler(req, res) {
       try { change = op === "clearPermanent" ? await clearPermanentExtra(chatId) : await adjustQuestionExtra(chatId, op, amount); }
       catch (e) { change = { error: "فشل حفظ التغيير، لم يتم تغيير أي شيء", fatal: true }; }
       if (change.error) {
-        await firestoreCommand(["DEL", `op:${req.body.requestId}`]);   // العملية ما حصلتش: نسمح بإعادة المحاولة
+        await firestoreCommand(["DEL", `op:${req.body.requestId}`]);
         return res.status(change.fatal ? 500 : 400).json({ error: change.error });
       }
-      const mine = (await getQuestions()).filter((x) => String(x.chatId) === chatId);
+      const mine = (await getQuestionsCached()).filter((x) => String(x.chatId) === chatId);
       const customerName = mine.find((x) => x.customerName)?.customerName || "";
       await logLimitChange({ t: Date.now(), chatId, customerName, admin: String(username).slice(0, 50), op, scope: op === "clearPermanent" ? "permanent" : "question", questionId: change.questionId || null, prevLimit: change.prevLimit, added: change.delta, newLimit: change.newLimit }).catch(() => {});
 
-      // الإشعار للعميل بعد نجاح الحفظ، وللزيادة فقط (مش للنقص أو الحذف). فشل الإشعار ما يلغيش التغيير.
       let notified = false;
       if (op === "add") {
         try {
@@ -458,14 +437,13 @@ export default async function handler(req, res) {
         }
       }
 
-            if (content.quickReplies !== undefined) {
+      if (content.quickReplies !== undefined) {
         if (!Array.isArray(content.quickReplies) || content.quickReplies.length > 50 ||
             content.quickReplies.some((q) => !q || typeof q.title !== "string" || q.title.length > 80 || typeof q.text !== "string" || q.text.length > 3500)) {
           return res.status(400).json({ error: "الإجابات السريعة: 50 إجابة كحد أقصى، العنوان 80 حرف، والنص 3500 حرف" });
         }
       }
       const cur = await readCurrent();
-      // المحرر ما يقدرش يحذف: لو عدد الزراير قل، نرفض
       if (role === "editor" && countNodes(content) < countNodes(cur.content)) {
         return res.status(403).json({ error: "المحرر مايقدرش يحذف زراير، اطلب من الأدمن" });
       }
@@ -486,7 +464,6 @@ export default async function handler(req, res) {
 
     return res.status(400).json({ error: "action غلط" });
   } catch (e) {
-    // بنشرح السبب للمستخدم وبنسجّله في Vercel Logs (من غير أسرار أو بيانات عملاء)
     const info = explainError(e, action);
     console.error("[admin]", info.log);
     return res.status(info.status).json({ error: info.message, code: info.code });
