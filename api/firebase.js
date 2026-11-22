@@ -297,7 +297,9 @@ async function runCommand(cmd) {
       refs.forEach((ref, i) => tx.set(ref, { position: nextIndex + args.length - 1 - i, value: values[i] }));
       return true;
     });
-    return result ? countEntries(root) : 0;   // طول القائمة بـ count() (قبل كده كان بيقرا القائمة كلها بعد كل إضافة)
+    // كل المستدعين يحتاجون نجاح العملية فقط؛ حساب طول القائمة هنا كان يضيف
+    // count() بعد كل LPUSH (سؤال/سجل/تنبيه) بلا أي استخدام فعلي للعدد.
+    return result ? true : 0;
   }
   if (operation === "LRANGE" || operation === "LSET" || operation === "LREM") {
     let query = root.collection("entries").orderBy("position", "asc");

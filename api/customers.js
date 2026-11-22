@@ -24,7 +24,9 @@ function loadKey() {
 }
 // الميزة كلها بتشتغل بس لو المفتاح موجود وصحيح (32 بايت). غير كده: مفيش طلب رقم ولا تخزين.
 export const phoneFeatureEnabled = () => loadKey() !== null;
-const PHONE_CACHE_MS = 60 * 1000;
+// حالة الهاتف لا تتغير أثناء تصفح القوائم؛ التعديل/المشاركة يمسحان الكاش فوراً.
+// مدة أطول تمنع قراءة HEXISTS مع كل عودة للقائمة الرئيسية.
+const PHONE_CACHE_MS = 5 * 60 * 1000;
 const phoneDueCache = new Map();
 const phoneExistsCache = new Map();
 function trimPhoneCache(cache) { if (cache.size > 20000) cache.clear(); }

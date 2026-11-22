@@ -88,6 +88,15 @@ const DEFAULT_PHONE_ERROR = "حصلت مشكلة وأنا بحفظ الرقم، 
 
 const fill = (t, vars) => Object.entries(vars).reduce((a, [k, v]) => a.split("{" + k + "}").join(String(v)), t);
 
+// قد يمر التحديث الواحد بأكثر من مرحلة (start/عرض القائمة/طلب الهاتف).
+// نعيد استخدام نتيجة الحظر داخل نفس التحديث فقط، من غير تغيير سلوك الصلاحيات.
+async function isBannedFor(ctx) {
+  if (ctx._isBannedForUpdate === undefined) {
+    ctx._isBannedForUpdate = await isBanned(ctx.chat?.id);
+  }
+  return ctx._isBannedForUpdate;
+}
+
 // تنظيف النص للمقارنة: بدون تشكيل، والحروف المتشابهة واحدة
 function norm(t = "") {
   return String(t).toLowerCase()
@@ -258,8 +267,8 @@ const sendPhonePrompt = (ctx, m = {}) => ctx.reply(toHtml(m.phonePrompt || DEFAU
 async function maybePromptPhone(ctx) {
   try {
     if (!phoneFeatureEnabled() || ctx.chat?.type !== "private" || !ctx.from) return;
+    if (await isBannedFor(ctx)) return;
     if (!(await phonePromptDue(ctx.chat.id))) return;
-    if (await isBanned(ctx.chat.id)) return;
     const m = (await getContent().catch(() => ({}))).messages || {};
     await sendPhonePrompt(ctx, m);
   } catch (e) { console.error("[phone] prompt failed:", e?.message); }
@@ -271,7 +280,7 @@ async function handlePhoneSkip(ctx, text) {
   const content = await getContent().catch(() => ({}));
   const m = content.messages || {};
   if (String(text).trim() !== (m.phoneSkipBtn || DEFAULT_PHONE_SKIP_BTN)) return false;
-  try { if (await isBanned(ctx.chat.id)) return true; } catch {}
+  try { if (await isBannedFor(ctx)) return true; } catch {}
   try { await skipPhone(ctx.from); } catch {}
   await ctx.reply(toHtml(m.phoneSkipped || DEFAULT_PHONE_SKIPPED), { parse_mode: "HTML", reply_markup: { remove_keyboard: true } });
   const { text: t, markup } = await renderFor(ctx, content, "");
@@ -281,7 +290,7 @@ async function handlePhoneSkip(ctx, text) {
 
 // استقبال جهة الاتصال: لازم تخص نفس المستخدم (contact.user_id === from.id)، وإلا بتترفض ومتتخزنش
 bot.on("message:contact", async (ctx) => {
-  try { if (await isBanned(ctx.chat.id)) return; } catch {}
+  try { if (await isBannedFor(ctx)) return; } catch {}
   if (!phoneFeatureEnabled() || ctx.chat.type !== "private" || !ctx.from) return;
   const content = await getContent().catch(() => ({}));
   const m = content.messages || {};
@@ -300,7 +309,7 @@ bot.on("message:contact", async (ctx) => {
 // زرار القايمة الرئيسية: مشاركة الرقم لاحقاً
 bot.callbackQuery("sharephone", async (ctx) => {
   await ctx.answerCallbackQuery();
-  try { if (await isBanned(ctx.chat.id)) return; } catch {}
+  try { if (await isBannedFor(ctx)) return; } catch {}
   if (!phoneFeatureEnabled() || ctx.chat?.type !== "private") return;
   const m = (await getContent().catch(() => ({}))).messages || {};
   try { await claimPhonePrompt(ctx.chat.id); } catch {}   // علشان الطلب التلقائي ما يظهرش بعد كده
@@ -312,7 +321,7 @@ bot.callbackQuery("sharephone", async (ctx) => {
 bot.command("notify", async (ctx) => {
   const chat = ctx.chat;
   if (!chat) return;
-  try { if (chat.type === "private" && (await isBanned(chat.id))) return; } catch {}
+  try { if (chat.type === "private" && (await isBannedFor(ctx))) return; } catch {}
   const arg = String(ctx.match || "").trim();
   try {
     if (/^(stop|off)$/i.test(arg)) return ctx.reply((await unlinkNotifyChat(chat.id)) ? "تم إيقاف التنبيهات على المحادثة دي." : "المحادثة دي مش مربوطة بالتنبيهات.");
@@ -331,21 +340,20 @@ bot.command("notify", async (ctx) => {
 });
 
 bot.command("start", async (ctx) => {
-  try { if (await isBanned(ctx.chat.id)) return; } catch {}
+  try { if (await isBannedFor(ctx)) return; } catch {}
   const { text, markup } = await renderFor(ctx, await getContent(), "");
   await ctx.reply(toHtml(text), HTML_OPTS(markup));
   await maybePromptPhone(ctx);
 });
 
 async function showNode(ctx, path, track) {
-  try { if (await isBanned(ctx.chat.id)) { await ctx.answerCallbackQuery(); return; } } catch {}
+  try { if (await isBannedFor(ctx)) { await ctx.answerCallbackQuery(); return; } } catch {}
   try {
     const node = getNode(await getContent(), path);
     const { text, markup } = await renderFor(ctx, node, path);
     await ctx.answerCallbackQuery();
     await sendNodeVideo(ctx, node);
     await ctx.reply(toHtml(text), HTML_OPTS(markup));
-    await maybePromptPhone(ctx);
   } catch {
     await ctx.answerCallbackQuery({ text: "المحتوى اتغير، ابعت /start", show_alert: true });
   }
@@ -426,7 +434,7 @@ async function showChoices(ctx, hits, content, m, withSendAnyway) {
 // العميل قال "ده مش قصدي": نسجل السؤال المعلّق
 bot.callbackQuery("pq", async (ctx) => {
   await ctx.answerCallbackQuery();
-  try { if (await isBanned(ctx.chat.id)) return; } catch {}
+  try { if (await isBannedFor(ctx)) return; } catch {}
   let text = null;
   try { text = await takePending(ctx.chat.id); } catch {}
   const content = await getContent().catch(() => ({}));
@@ -442,7 +450,7 @@ bot.callbackQuery("pq", async (ctx) => {
 bot.callbackQuery(/^ask:(.*)$/, async (ctx) => {
   const path = ctx.match[1];
   try {
-    try { if (await isBanned(ctx.chat.id)) { await ctx.answerCallbackQuery(); return; } } catch {}
+    try { if (await isBannedFor(ctx)) { await ctx.answerCallbackQuery(); return; } } catch {}
     const content = await getContent();
     const node = getNode(content, path);
     await ctx.answerCallbackQuery();
@@ -550,7 +558,7 @@ async function handleMessageCore(ctx, text, msg) {
     return;
   }
 
-  try { if (await isBanned(ctx.chat.id)) return; } catch {}
+  try { if (await isBannedFor(ctx)) return; } catch {}
   const content = await getContent().catch(() => ({}));
   const m = content.messages || {};
   const root = (await renderFor(ctx, content, "")).markup;

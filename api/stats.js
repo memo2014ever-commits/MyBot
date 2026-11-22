@@ -541,30 +541,54 @@ export async function banUser(chatId, reason, bannedBy) {
   const key = banKey(chatId);
   const saved = await firestoreCommand(["HSET", key, "chatId", String(chatId), "reason", String(reason).slice(0, 300), "bannedAt", Date.now(), "bannedBy", String(bannedBy).slice(0, 50)]);
   await firestoreCommand(["SADD", "bans:set", String(chatId)]);
-  if (saved !== null) { banCache.add(String(chatId)); banCacheLoaded = true; banCacheAt = Date.now(); }
+  if (saved !== null) {
+    banDecisionCache.set(String(chatId), { value: true, until: Date.now() + BAN_DECISION_CACHE_MS });
+    noBansCheckedAt = 0;
+    noBansUntil = 0;
+  }
 }
 
 export async function unbanUser(chatId) {
   await firestoreCommand(["DEL", banKey(chatId)]);
   const removed = await firestoreCommand(["SREM", "bans:set", String(chatId)]);
-  if (removed !== null) { banCache.delete(String(chatId)); banCacheLoaded = true; banCacheAt = Date.now(); }
+  if (removed !== null) {
+    banDecisionCache.set(String(chatId), { value: false, until: Date.now() + BAN_DECISION_CACHE_MS });
+    noBansCheckedAt = 0;
+    noBansUntil = 0;
+  }
 }
 
-const BAN_CACHE_MS = 60 * 1000;
-let banCache = new Set();
-let banCacheAt = 0;
-let banCacheLoaded = false;
+// في الوضع الحالي لا توجد حظورات. نتحقق من ذلك مرة كل 24 ساعة لكل نسخة
+// تشغيل، ثم نتجاوز Firestore تماماً أثناء تصفح القوائم في بقية المدة.
+// إذا وُجد حظر، نرجع لفحص مستند العميل فقط، ولا نقرأ القائمة كاملة لكل ضغطة.
+const NO_BANS_RECHECK_MS = 24 * 60 * 60 * 1000;
+const BAN_DECISION_CACHE_MS = 30 * 1000;
+const banDecisionCache = new Map();
+let noBansCheckedAt = 0;
+let noBansUntil = 0;
+
+async function knownNoBans(now) {
+  if (noBansUntil > now) return true;
+  if (noBansCheckedAt && now - noBansCheckedAt < NO_BANS_RECHECK_MS) return false;
+  const ids = await firestoreCommand(["SMEMBERS", "bans:set"]);
+  noBansCheckedAt = now;
+  if (Array.isArray(ids) && ids.length === 0) {
+    noBansUntil = now + NO_BANS_RECHECK_MS;
+    return true;
+  }
+  return false;
+}
+
 export async function isBanned(chatId) {
   const now = Date.now();
-  if (!banCacheLoaded || now - banCacheAt >= BAN_CACHE_MS) {
-    const ids = await firestoreCommand(["SMEMBERS", "bans:set"]);
-    if (Array.isArray(ids)) {
-      banCache = new Set(ids.map(String));
-      banCacheAt = now;
-      banCacheLoaded = true;
-    }
-  }
-  return banCache.has(String(chatId));
+  const id = String(chatId);
+  if (await knownNoBans(now)) return false;
+  const cached = banDecisionCache.get(id);
+  if (cached && cached.until > now) return cached.value;
+  const value = (await firestoreCommand(["HEXISTS", banKey(id), "chatId"])) === 1;
+  banDecisionCache.set(id, { value, until: now + BAN_DECISION_CACHE_MS });
+  if (banDecisionCache.size > 20000) banDecisionCache.clear();
+  return value;
 }
 
 export async function getBanInfo(chatId) {
