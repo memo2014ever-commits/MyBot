@@ -1,7 +1,7 @@
 // بوت تلجرام: قايمة + رجوع + روابط + زرار سؤال + بحث بالكلمات + تحويل الطبي للخط الساخن
 import { Bot, InlineKeyboard, Keyboard, webhookCallback } from "grammy";
 import {
-  pushQuestion, questionAllowed, questionsLeft, MAX_QUESTIONS_COUNT, getIntake, DEFAULT_INTAKE_MESSAGE, questionForReply, addFollowup, getQuestions, getQuestionById, answerQuestion, getExtraFollowups, limitForItem, setPending, takePending, isBanned, setPendingImage, takePendingImage,
+  pushQuestion, questionAllowed, questionsLeft, MAX_QUESTIONS_COUNT, getIntake, DEFAULT_INTAKE_MESSAGE, questionForReply, addFollowup, getQuestionById, answerQuestion, getExtraFollowups, limitForItem, setPending, takePending, isBanned, setPendingImage, takePendingImage,
 } from "./stats.js";
 import { notifyStaffSafe, getNotifyConfig, consumeLinkCode, unlinkNotifyChat, isNotifyChat, MAX_NOTIFY_CHATS } from "./notify.js";
 import { phoneFeatureEnabled, claimPhonePrompt, phonePromptDue, hasPhone, savePhone, skipPhone, upsertInfo, normalizePhone } from "./customers.js";
@@ -55,11 +55,6 @@ async function extractAttachments(msg) {
   return attachments;
 }
 
-const DEFAULT_CLOSED_AUTO = "🔒 تم إغلاق سؤالك تلقائيًا لعدم وجود متابعة خلال 24 ساعة.\n\nإذا كان لديك استفسار جديد، استخدم زر «ابعت سؤالك» 👇";
-async function notifyExpired(items, message = DEFAULT_CLOSED_AUTO) {
-  await Promise.all((items || []).map((x) => bot.api.sendMessage(x.chatId, message).catch(() => {})));
-}
-
 // الرسايل الافتراضية (تتغير من ⚙️ رسايل النظام في اللوحة)
 const DEFAULT_PROMPT = "اكتب سؤالك هنا 👇";
 const DEFAULT_THANKS = "استلمنا سؤالك، شكراً لتواصلك 🌷";
@@ -87,12 +82,14 @@ const DEFAULT_PHONE_ALREADY = "رقمك محفوظ عندنا بالفعل ✅";
 const DEFAULT_PHONE_ERROR = "حصلت مشكلة وأنا بحفظ الرقم، جرّب تاني بعد شوية 🙏";
 
 const fill = (t, vars) => Object.entries(vars).reduce((a, [k, v]) => a.split("{" + k + "}").join(String(v)), t);
+const safeReply = (ctx, text, opts) => ctx.reply(text, opts).catch(() => {});
+const safeAnswerCb = (ctx, opts) => ctx.answerCallbackQuery(opts).catch(() => {});
 
 // قد يمر التحديث الواحد بأكثر من مرحلة (start/عرض القائمة/طلب الهاتف).
 // نعيد استخدام نتيجة الحظر داخل نفس التحديث فقط، من غير تغيير سلوك الصلاحيات.
 async function isBannedFor(ctx) {
   if (ctx._isBannedForUpdate === undefined) {
-    ctx._isBannedForUpdate = await isBanned(ctx.chat?.id);
+    ctx._isBannedForUpdate = await isBanned(ctx.chat?.id).catch(() => false);
   }
   return ctx._isBannedForUpdate;
 }
@@ -150,7 +147,6 @@ function searchNodes(content, text) {
     const kws = [...new Set([node.label, ...(Array.isArray(node.keywords) ? node.keywords : [])]
       .map(norm).filter((k) => k.length >= 2))];
     const nameScore = kws.filter((k) => t.includes(" " + k + " ")).length * 2;
-    // الكلمة المفردة جوه أي عبارة (زي "الاوراق" جوه "الأوراق المطلوبة")
     const kwTokens = new Set(kws.flatMap((k) => k.split(" ")).filter((x) => x.length >= 3 && !COMMON.has(x)));
     const tokenScore = qt.filter((tok) => kwTokens.has(tok)).length;
 
@@ -172,19 +168,25 @@ function searchNodes(content, text) {
 let cache = null;
 let cacheTime = 0;
 async function getContent() {
+  if (!CONTENT_URL) return cache || {};
   if (!cache || Date.now() - cacheTime > 60_000) {
     const res = await fetch(CONTENT_URL + "?t=" + Date.now());
-    cache = await res.json();
-    cacheTime = Date.now();
+    if (res.ok) {
+      cache = await res.json();
+      cacheTime = Date.now();
+    }
   }
-  return cache;
+  return cache || {};
 }
 
 // "0.2" = الزرار رقم 0 جواه الزرار رقم 2. الجذر = ""
 function getNode(root, path) {
   let node = root;
   if (path === "") return node;
-  for (const i of path.split(".").map(Number)) node = node.items[i];
+  for (const i of path.split(".").map(Number)) {
+    if (!node?.items?.[i]) throw new Error("Node not found");
+    node = node.items[i];
+  }
   return node;
 }
 
@@ -193,20 +195,6 @@ function toHtml(text = "") {
   const esc = (t) => t.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
   return esc(text).replace(/\[([^\]]+)\]\((https:\/\/[^\s)]+)\)/g, (_, label, url) =>
     `<a href="${url}">${label}</a>`);
-}
-
-// فلتر السؤال: كلمة من قايمة كلمات السؤال (من اللوحة أو الافتراضية)
-const QUESTION_WORDS = [
-  "ازاي", "إزاي", "امتى", "إمتى", "فين", "ايه", "إيه", "اي", "ايوه", "هل", "كام", "كم",
-  "ممكن", "عايز", "عاوز", "عايزة", "عاوزه", "محتاج", "محتاجة", "لو سمحت", "مين", "ليه", "علشان", "عشان",
-  "عنوان", "موعد", "مواعيد", "سعر", "تكلفة", "فيه", "فيها", "متاح", "متاحة", "بيفتح", "بيقفل", "بيشتغل",
-  "ينفع", "لازم", "المستندات", "مستندات", "أعرف", "اعرف", "قولي", "ابعتلي", "احجز", "أحجز",
-  "اقرب", "أقرب", "لجنة", "لجان", "الكشف", "كشف", "نتيجة", "طلب", "تأجيل", "الغاء", "إلغاء", "تعديل",
-];
-function looksLikeQuestion(text = "", words = QUESTION_WORDS) {
-  if (norm(text).length < 4) return false;
-  const t = padded(text);
-  return words.some((w) => t.includes(" " + norm(w) + " "));
 }
 
 // اسم الزرار الأب لأي مسار (عشان "تقصد؟" توضح المكان)
@@ -233,7 +221,7 @@ function render(node, path, hidePhoneBtn = false) {
   if (path !== "") {
     const parent = path.includes(".") ? path.slice(0, path.lastIndexOf(".")) : "";
     kb.text("🔙 رجوع", `b:${parent}`).row();
-    kb.text("🏠 القايمة الرئيسية", "home");   // يرجّع لأول قايمة في البوت
+    kb.text("🏠 القايمة الرئيسية", "home");
   }
   return { text: node.text || node.label || "—", markup: kb };
 }
@@ -259,11 +247,9 @@ const phoneKeyboard = (m = {}) => new Keyboard()
   .text(m.phoneSkipBtn || DEFAULT_PHONE_SKIP_BTN)
   .oneTime().resized();
 
-const sendPhonePrompt = (ctx, m = {}) => ctx.reply(toHtml(m.phonePrompt || DEFAULT_PHONE_PROMPT), { parse_mode: "HTML", reply_markup: phoneKeyboard(m) });
+const sendPhonePrompt = (ctx, m = {}) => safeReply(ctx, toHtml(m.phonePrompt || DEFAULT_PHONE_PROMPT), { parse_mode: "HTML", reply_markup: phoneKeyboard(m) });
 
-// طلب الرقم: أول تفاعل، وبعدها تذكير محدود حسب جدول (24 ساعة × 5 مرات لو تجاهل، وكل 3 أيام لمدة شهر لو اختار "بدون مشاركة").
-// العميل القديم يشوفه عند أول تفاعل له بعد التحديث، من غير أي رسالة جماعية.
-// ما بيشتغلش خالص لو PHONE_ENC_KEY مش مضبوط. وأي فشل هنا ما يوقفش البوت.
+// طلب الرقم: أول تفاعل، وبعدها تذكير محدود حسب جدول
 async function maybePromptPhone(ctx) {
   try {
     if (!phoneFeatureEnabled() || ctx.chat?.type !== "private" || !ctx.from) return;
@@ -280,40 +266,44 @@ async function handlePhoneSkip(ctx, text) {
   const content = await getContent().catch(() => ({}));
   const m = content.messages || {};
   if (String(text).trim() !== (m.phoneSkipBtn || DEFAULT_PHONE_SKIP_BTN)) return false;
-  try { if (await isBannedFor(ctx)) return true; } catch {}
+  if (await isBannedFor(ctx)) return true;
   try { await skipPhone(ctx.from); } catch {}
-  await ctx.reply(toHtml(m.phoneSkipped || DEFAULT_PHONE_SKIPPED), { parse_mode: "HTML", reply_markup: { remove_keyboard: true } });
+  await safeReply(ctx, toHtml(m.phoneSkipped || DEFAULT_PHONE_SKIPPED), { parse_mode: "HTML", reply_markup: { remove_keyboard: true } });
   const { text: t, markup } = await renderFor(ctx, content, "");
-  await ctx.reply(toHtml(t), HTML_OPTS(markup));
+  await safeReply(ctx, toHtml(t), HTML_OPTS(markup));
   return true;
 }
 
 // استقبال جهة الاتصال: لازم تخص نفس المستخدم (contact.user_id === from.id)، وإلا بتترفض ومتتخزنش
 bot.on("message:contact", async (ctx) => {
-  try { if (await isBannedFor(ctx)) return; } catch {}
+  if (await isBannedFor(ctx)) return;
   if (!phoneFeatureEnabled() || ctx.chat.type !== "private" || !ctx.from) return;
   const content = await getContent().catch(() => ({}));
   const m = content.messages || {};
   const c = ctx.message.contact;
   const phone = c && Number(c.user_id) === Number(ctx.from.id) ? normalizePhone(c.phone_number) : null;
-  if (!phone) return ctx.reply(toHtml(m.phoneMismatch || DEFAULT_PHONE_MISMATCH), { parse_mode: "HTML", reply_markup: phoneKeyboard(m) });
+  if (!phone) return safeReply(ctx, toHtml(m.phoneMismatch || DEFAULT_PHONE_MISMATCH), { parse_mode: "HTML", reply_markup: phoneKeyboard(m) });
   let ok = false;
   try { ok = await savePhone(ctx.from, phone); } catch (e) { console.error("[phone] save failed:", e?.message); }
-  if (!ok) return ctx.reply(toHtml(m.phoneError || DEFAULT_PHONE_ERROR), { parse_mode: "HTML", reply_markup: { remove_keyboard: true } });
-  await ctx.reply(toHtml(m.phoneThanks || DEFAULT_PHONE_THANKS), { parse_mode: "HTML", reply_markup: { remove_keyboard: true } });
-  ctx._phoneShared = true;   // لسه حافظين الرقم: القايمة اللي هتتبعت من غير الزرار
+  if (!ok) return safeReply(ctx, toHtml(m.phoneError || DEFAULT_PHONE_ERROR), { parse_mode: "HTML", reply_markup: { remove_keyboard: true } });
+  await safeReply(ctx, toHtml(m.phoneThanks || DEFAULT_PHONE_THANKS), { parse_mode: "HTML", reply_markup: { remove_keyboard: true } });
+  ctx._phoneShared = true;
   const { text, markup } = await renderFor(ctx, content, "");
-  await ctx.reply(toHtml(text), HTML_OPTS(markup));
+  await safeReply(ctx, toHtml(text), HTML_OPTS(markup));
 });
 
 // زرار القايمة الرئيسية: مشاركة الرقم لاحقاً
 bot.callbackQuery("sharephone", async (ctx) => {
-  await ctx.answerCallbackQuery();
-  try { if (await isBannedFor(ctx)) return; } catch {}
+  await safeAnswerCb(ctx);
+  if (await isBannedFor(ctx)) return;
   if (!phoneFeatureEnabled() || ctx.chat?.type !== "private") return;
-  const m = (await getContent().catch(() => ({}))).messages || {};
-  try { await claimPhonePrompt(ctx.chat.id); } catch {}   // علشان الطلب التلقائي ما يظهرش بعد كده
-  if (await hasPhone(ctx.chat.id).catch(() => false)) return ctx.reply(toHtml(m.phoneAlready || DEFAULT_PHONE_ALREADY), HTML_OPTS((await renderFor(ctx, await getContent(), "")).markup));
+  const content = await getContent().catch(() => ({}));
+  const m = content.messages || {};
+  try { await claimPhonePrompt(ctx.chat.id); } catch {}
+  if (await hasPhone(ctx.chat.id).catch(() => false)) {
+    const { text, markup } = await renderFor(ctx, content, "");
+    return safeReply(ctx, toHtml(m.phoneAlready || DEFAULT_PHONE_ALREADY) + "\n\n" + toHtml(text), HTML_OPTS(markup));
+  }
   return sendPhonePrompt(ctx, m);
 });
 
@@ -321,58 +311,60 @@ bot.callbackQuery("sharephone", async (ctx) => {
 bot.command("notify", async (ctx) => {
   const chat = ctx.chat;
   if (!chat) return;
-  try { if (chat.type === "private" && (await isBannedFor(ctx))) return; } catch {}
+  if (chat.type === "private" && (await isBannedFor(ctx))) return;
   const arg = String(ctx.match || "").trim();
   try {
-    if (/^(stop|off)$/i.test(arg)) return ctx.reply((await unlinkNotifyChat(chat.id)) ? "تم إيقاف التنبيهات على المحادثة دي." : "المحادثة دي مش مربوطة بالتنبيهات.");
-    if (!arg) return ctx.reply("لربط التنبيهات: افتح اللوحة، واضغط «ربط محادثة»، وابعت هنا:\n/notify الكود");
+    if (/^(stop|off)$/i.test(arg)) return safeReply(ctx, (await unlinkNotifyChat(chat.id)) ? "تم إيقاف التنبيهات على المحادثة دي." : "المحادثة دي مش مربوطة بالتنبيهات.");
+    if (!arg) return safeReply(ctx, "لربط التنبيهات: افتح اللوحة، واضغط «ربط محادثة»، وابعت هنا:\n/notify الكود");
     const label = chat.type === "private" ? ([ctx.from?.first_name, ctx.from?.last_name].filter(Boolean).join(" ") || "محادثة خاصة") : (chat.title || "جروب");
     const r = await consumeLinkCode(arg, { id: chat.id, type: chat.type, label });
     if (r.ok) {
       const cfg = await getNotifyConfig().catch(() => ({ enabled: true }));
-      return ctx.reply(`تم ربط التنبيهات ✅${r.already ? " (المحادثة دي كانت مربوطة)" : ""}\nهتوصلك رسالة هنا لما يجي سؤال أو متابعة جديدة.${cfg.enabled ? "" : "\n\nملحوظة: التنبيهات متوقفة دلوقتي من اللوحة، شغّلها من هناك."}\nلإيقافها: /notify stop`);
+      return safeReply(ctx, `تم ربط التنبيهات ✅${r.already ? " (المحادثة دي كانت مربوطة)" : ""}\nهتوصلك رسالة هنا لما يجي سؤال أو متابعة جديدة.${cfg.enabled ? "" : "\n\nملحوظة: التنبيهات متوقفة دلوقتي من اللوحة، شغّلها من هناك."}\nلإيقافها: /notify stop`);
     }
-    if (r.error === "many") return ctx.reply("محاولات كتير غلط. استنى 10 دقايق وجرّب تاني.");
-    if (r.error === "full") return ctx.reply(`وصلت للحد الأقصى (${MAX_NOTIFY_CHATS} محادثات). افصل محادثة من اللوحة الأول.`);
-    if (r.error === "save") return ctx.reply("حصلت مشكلة وأنا بحفظ الربط. جرّب تاني.");
-    return ctx.reply("الكود غير صحيح أو منتهي. اطلب كود جديد من اللوحة.");
+    if (r.error === "many") return safeReply(ctx, "محاولات كتير غلط. استنى 10 دقايق وجرّب تاني.");
+    if (r.error === "full") return safeReply(ctx, `وصلت للحد الأقصى (${MAX_NOTIFY_CHATS} محادثات). افصل محادثة من اللوحة الأول.`);
+    if (r.error === "save") return safeReply(ctx, "حصلت مشكلة وأنا بحفظ الربط. جرّب تاني.");
+    return safeReply(ctx, "الكود غير صحيح أو منتهي. اطلب كود جديد من اللوحة.");
   } catch (e) { console.error("[notify] link failed:", e?.message); }
 });
 
 bot.command("start", async (ctx) => {
-  try { if (await isBannedFor(ctx)) return; } catch {}
-  const { text, markup } = await renderFor(ctx, await getContent(), "");
-  await ctx.reply(toHtml(text), HTML_OPTS(markup));
+  if (await isBannedFor(ctx)) return;
+  const content = await getContent().catch(() => ({}));
+  const { text, markup } = await renderFor(ctx, content, "");
+  await safeReply(ctx, toHtml(text), HTML_OPTS(markup));
   await maybePromptPhone(ctx);
 });
 
-async function showNode(ctx, path, track) {
-  try { if (await isBannedFor(ctx)) { await ctx.answerCallbackQuery(); return; } } catch {}
+async function showNode(ctx, path) {
+  if (await isBannedFor(ctx)) { await safeAnswerCb(ctx); return; }
   try {
-    const node = getNode(await getContent(), path);
+    const content = await getContent();
+    const node = getNode(content, path);
     const { text, markup } = await renderFor(ctx, node, path);
-    await ctx.answerCallbackQuery();
+    await safeAnswerCb(ctx);
     await sendNodeVideo(ctx, node);
-    await ctx.reply(toHtml(text), HTML_OPTS(markup));
+    await safeReply(ctx, toHtml(text), HTML_OPTS(markup));
+    if (path === "") await maybePromptPhone(ctx);
   } catch {
-    await ctx.answerCallbackQuery({ text: "المحتوى اتغير، ابعت /start", show_alert: true });
+    await safeAnswerCb(ctx, { text: "المحتوى اتغير، ابعت /start", show_alert: true });
   }
 }
 
-bot.callbackQuery(/^n:(.*)$/, (ctx) => showNode(ctx, ctx.match[1], true));
-bot.callbackQuery(/^b:(.*)$/, (ctx) => showNode(ctx, ctx.match[1], false));
-bot.callbackQuery("home", (ctx) => showNode(ctx, "", false));
-
+bot.callbackQuery(/^n:(.*)$/, (ctx) => showNode(ctx, ctx.match[1]));
+bot.callbackQuery(/^b:(.*)$/, (ctx) => showNode(ctx, ctx.match[1]));
+bot.callbackQuery("home", (ctx) => showNode(ctx, ""));
 
 const SHORT_REPLIES = new Set([
   "شكرا", "شكراً", "تمام", "تمام شكرا", "اهلا", "أهلا", "السلام عليكم", "وعليكم السلام", "الو", "الوو", "ok", "اوك", "ماشي",
 ].map((x) => norm(x)));
 
 // الرد على خانة السؤال: قصير؟ ← بحث ← (إجابة واحدة: يرد) (أكتر: تقصد + بديل) (مفيش: يسجل)
-async function handleAskReply(ctx, text, content, m, root, attachments = []) {
+async function handleAskReply(ctx, text, content, m, attachments = []) {
   const cleaned = norm(text);
   if (cleaned.length < 3 || SHORT_REPLIES.has(cleaned)) {
-    return ctx.reply("اكتب سؤالك بشكل أوضح 👇", {
+    return safeReply(ctx, "اكتب سؤالك بشكل أوضح 👇", {
       reply_markup: { force_reply: true, input_field_placeholder: "اكتب سؤالك..." },
     });
   }
@@ -382,20 +374,19 @@ async function handleAskReply(ctx, text, content, m, root, attachments = []) {
     try { await setPending(ctx.chat.id, text); } catch {}
     return showChoices(ctx, hits, content, m, true);
   }
+  const root = (await renderFor(ctx, content, "")).markup;
   return saveAndThank(ctx, text, m, root, attachments);
 }
 
 // تسجيل السؤال + الشكر + المتبقي من الحد
 async function saveAndThank(ctx, text, m, root, attachments = []) {
-  // استقبال الأسئلة الجديدة متوقف؟ نعتذر قبل ما نستهلك حد العميل اليومي أو ناخد الصورة المعلقة
   const intake = await getIntake().catch(() => ({ enabled: true }));
-  if (!intake.enabled) return ctx.reply(toHtml(intake.message || DEFAULT_INTAKE_MESSAGE), HTML_OPTS(root));
+  if (!intake.enabled) return safeReply(ctx, toHtml(intake.message || DEFAULT_INTAKE_MESSAGE), HTML_OPTS(root));
   let quota = null;
   try { quota = await questionAllowed(ctx.chat.id); } catch {}
-  if (!quota) return ctx.reply(toHtml(m.questionSaveError || DEFAULT_QUESTION_SAVE_ERROR), HTML_OPTS(root));
-  if (!quota.allowed) return ctx.reply(fill(m.limitReached || DEFAULT_LIMIT, { max: MAX_QUESTIONS_COUNT }), HTML_OPTS(root));
+  if (!quota) return safeReply(ctx, toHtml(m.questionSaveError || DEFAULT_QUESTION_SAVE_ERROR), HTML_OPTS(root));
+  if (!quota.allowed) return safeReply(ctx, fill(m.limitReached || DEFAULT_LIMIT, { max: MAX_QUESTIONS_COUNT }), HTML_OPTS(root));
   const customerName = [ctx.from?.first_name, ctx.from?.last_name].filter(Boolean).join(" ") || (ctx.from?.username ? `@${ctx.from.username}` : "");
-  // لو مفيش مرفق جاي مع السؤال، نشوف لو في صورة معلقة من قبل
   let finalAttachments = attachments;
   if (!finalAttachments.length) {
     try {
@@ -408,13 +399,13 @@ async function saveAndThank(ctx, text, m, root, attachments = []) {
     pushed = await pushQuestion(text, ctx.chat.id, customerName, finalAttachments, ctx.from?.username || "", true);
   } catch {}
   if (!pushed?.ok) {
-    if (pushed?.reason === "intake_paused") return ctx.reply(toHtml(pushed.message || DEFAULT_INTAKE_MESSAGE), HTML_OPTS(root));
-    return ctx.reply(toHtml(m.questionSaveError || DEFAULT_QUESTION_SAVE_ERROR), HTML_OPTS(root));
+    if (pushed?.reason === "intake_paused") return safeReply(ctx, toHtml(pushed.message || DEFAULT_INTAKE_MESSAGE), HTML_OPTS(root));
+    return safeReply(ctx, toHtml(m.questionSaveError || DEFAULT_QUESTION_SAVE_ERROR), HTML_OPTS(root));
   }
   try { if (phoneFeatureEnabled()) await upsertInfo(ctx.from); } catch {}
   const tail = quota.left > 0 ? "\n" + fill(m.remaining || DEFAULT_LEFT, { left: quota.left }) : "";
-  const thanks = await ctx.reply(toHtml((m.askThanks || DEFAULT_THANKS) + tail), HTML_OPTS(root));
-  await notifyStaffSafe({ kind: "question", questionId: pushed.question.id, name: customerName, text });   // بعد ما السؤال اتحفظ والعميل خد ردّه
+  const thanks = await safeReply(ctx, toHtml((m.askThanks || DEFAULT_THANKS) + tail), HTML_OPTS(root));
+  await notifyStaffSafe({ kind: "question", questionId: pushed.question.id, name: customerName, text });
   return thanks;
 }
 
@@ -428,45 +419,45 @@ async function showChoices(ctx, hits, content, m, withSendAnyway) {
   });
   if (withSendAnyway) kb.text("📝 لا، ده مش قصدي، ابعت سؤالي", "pq").row();
   const lines = top.map((h) => choiceLine(content, h)).join("\n");
-  return ctx.reply(toHtml((m.didYouMean || DEFAULT_DYM) + "\n\n" + lines), HTML_OPTS(kb));
+  return safeReply(ctx, toHtml((m.didYouMean || DEFAULT_DYM) + "\n\n" + lines), HTML_OPTS(kb));
 }
 
 // العميل قال "ده مش قصدي": نسجل السؤال المعلّق
 bot.callbackQuery("pq", async (ctx) => {
-  await ctx.answerCallbackQuery();
-  try { if (await isBannedFor(ctx)) return; } catch {}
+  await safeAnswerCb(ctx);
+  if (await isBannedFor(ctx)) return;
   let text = null;
   try { text = await takePending(ctx.chat.id); } catch {}
   const content = await getContent().catch(() => ({}));
   const m = content.messages || {};
-  const root = (await renderFor(ctx, content, "")).markup;
-  if (!text) return ctx.reply("انتهت المهلة، اكتب سؤالك تاني 👇", {
+  if (!text) return safeReply(ctx, "انتهت المهلة، اكتب سؤالك تاني 👇", {
     reply_markup: { force_reply: true, input_field_placeholder: "اكتب سؤالك..." },
   });
+  const root = (await renderFor(ctx, content, "")).markup;
   return saveAndThank(ctx, text, m, root);
 });
 
 // زرار "ابعت سؤالك"
 bot.callbackQuery(/^ask:(.*)$/, async (ctx) => {
-  const path = ctx.match[1];
   try {
-    try { if (await isBannedFor(ctx)) { await ctx.answerCallbackQuery(); return; } } catch {}
+    if (await isBannedFor(ctx)) { await safeAnswerCb(ctx); return; }
     const content = await getContent();
-    const node = getNode(content, path);
-    await ctx.answerCallbackQuery();
+    await safeAnswerCb(ctx);
     const intake = await getIntake().catch(() => ({ enabled: true }));
-    if (!intake.enabled) {   // الزرار ظاهر، لكن بنعتذر بدل ما نفتح خانة السؤال
-      return ctx.reply(toHtml(intake.message || DEFAULT_INTAKE_MESSAGE), HTML_OPTS((await renderFor(ctx, content, "")).markup));
+    if (!intake.enabled) {
+      const root = (await renderFor(ctx, content, "")).markup;
+      return safeReply(ctx, toHtml(intake.message || DEFAULT_INTAKE_MESSAGE), HTML_OPTS(root));
     }
     if ((await questionsLeft(ctx.chat.id)) <= 0) {
+      const root = (await renderFor(ctx, content, "")).markup;
       const lm = content.messages?.limitReached || DEFAULT_LIMIT;
-      return ctx.reply(fill(lm, { max: MAX_QUESTIONS_COUNT }), HTML_OPTS((await renderFor(ctx, content, "")).markup));
+      return safeReply(ctx, fill(lm, { max: MAX_QUESTIONS_COUNT }), HTML_OPTS(root));
     }
-    await ctx.reply(content.messages?.askPrompt || DEFAULT_PROMPT, {
+    await safeReply(ctx, content.messages?.askPrompt || DEFAULT_PROMPT, {
       reply_markup: { force_reply: true, input_field_placeholder: "اكتب سؤالك..." },
     });
   } catch {
-    await ctx.answerCallbackQuery({ text: "المحتوى اتغير، ابعت /start", show_alert: true });
+    await safeAnswerCb(ctx, { text: "المحتوى اتغير، ابعت /start", show_alert: true });
   }
 });
 
@@ -475,14 +466,13 @@ async function showHit(ctx, hit) {
   await sendNodeVideo(ctx, hit.node);
   if (hit.node.url) {
     const kb = new InlineKeyboard().url(hit.node.label, hit.node.url);
-    return ctx.reply(toHtml(hit.node.text || hit.node.label), HTML_OPTS(kb));
+    return safeReply(ctx, toHtml(hit.node.text || hit.node.label), HTML_OPTS(kb));
   }
   const { text, markup } = render(hit.node, hit.path);
-  // لو المطابقة في النص: نعرض السطر اللي فيه المعلومة بس، ومعاه اسم المكان
   if (hit.matchedIn === "text" && hit.snippet) {
-    return ctx.reply(toHtml(`📍 ${hit.node.label}\n${hit.snippet}`), HTML_OPTS(markup));
+    return safeReply(ctx, toHtml(`📍 ${hit.node.label}\n${hit.snippet}`), HTML_OPTS(markup));
   }
-  return ctx.reply(toHtml(text), HTML_OPTS(markup));
+  return safeReply(ctx, toHtml(text), HTML_OPTS(markup));
 }
 
 // الرد على رسالة التنبيه في جروب مربوط: QID يحدد السؤال، ولا يُقبل إلا من الجروب المرتبط.
@@ -502,14 +492,14 @@ async function handleStaffGroupAnswer(ctx, text, msg, messages = {}) {
   if (!linked) return false;
 
   const answer = String(text || msg.caption || "").trim();
-  if (!answer) { await ctx.reply("اكتب نص الإجابة في ردّك على تنبيه السؤال عشان أبعته للعميل."); return true; }
-  if (answer.length > 3500) { await ctx.reply("الإجابة طويلة؛ الحد الأقصى 3500 حرف."); return true; }
+  if (!answer) { await safeReply(ctx, "اكتب نص الإجابة في ردّك على تنبيه السؤال عشان أبعته للعميل."); return true; }
+  if (answer.length > 3500) { await safeReply(ctx, "الإجابة طويلة؛ الحد الأقصى 3500 حرف."); return true; }
 
   let question = null;
   try { question = await getQuestionById(questionId); } catch {}
-  if (!question?.chatId) { await ctx.reply("ملقتش السؤال ده في السجل؛ افتح لوحة التحكم للتأكد من حالته."); return true; }
+  if (!question?.chatId) { await safeReply(ctx, "ملقتش السؤال ده في السجل؛ افتح لوحة التحكم للتأكد من حالته."); return true; }
   if (!(["open", "followup_pending"].includes(question.status || "open"))) {
-    await ctx.reply("السؤال ده اترد عليه أو اتقفل بالفعل؛ افتح لوحة التحكم لو محتاج تراجع حالته.");
+    await safeReply(ctx, "السؤال ده اترد عليه أو اتقفل بالفعل؛ افتح لوحة التحكم لو محتاج تراجع حالته.");
     return true;
   }
 
@@ -531,26 +521,25 @@ async function handleStaffGroupAnswer(ctx, text, msg, messages = {}) {
     sent = await ctx.api.sendMessage(question.chatId, `📩 رد على سؤالك:\n\n${answer}${footer}`, replyMarkup ? { reply_markup: replyMarkup } : {});
   } catch (e) {
     console.error("[group-answer] Telegram send failed:", e?.description || e?.message);
-    await ctx.reply("ماقدرتش أوصل الرد للعميل. جرّب تاني من فضلك.");
+    await safeReply(ctx, "ماقدرتش أوصل الرد للعميل. جرّب تاني من فضلك.");
     return true;
   }
 
   const updated = await answerQuestion(question.id, answer, sent.message_id).catch(() => null);
   if (!updated) {
-    await ctx.reply("الرد اتبعت للعميل، لكن تعذر تحديث حالة السؤال في السجل بسبب مشكلة تخزين. ما تبعتش نفس الرد مرة تانية؛ راجع السؤال من اللوحة.");
+    await safeReply(ctx, "الرد اتبعت للعميل، لكن تعذر تحديث حالة السؤال في السجل بسبب مشكلة تخزين. ما تبعتش نفس الرد مرة تانية؛ راجع السؤال من اللوحة.");
     return true;
   }
   if (updated.status === "archived") {
     const closed = messages.manualClosed || "🔒 تم إغلاق هذا السؤال من الإدارة.\n\nإذا كان لديك استفسار جديد، استخدم زر «ابعت سؤالك» 👇";
     await ctx.api.sendMessage(question.chatId, closed).catch(() => {});
   }
-  await ctx.reply("تم إرسال الرد للعميل وتحديث حالة السؤال ✅");
+  await safeReply(ctx, "تم إرسال الرد للعميل وتحديث حالة السؤال ✅");
   return true;
 }
 
 // الرسايل النصية: طبي؟ ← رد على خانة السؤال؟ ← بحث بالكلمات ← رد عام
 async function handleMessageCore(ctx, text, msg) {
-  // معالجة رسائل المجموعات المرتبطة أولاً دون أي قراءات تصفح جانبية
   if (["group", "supergroup"].includes(ctx.chat?.type)) {
     const content = await getContent().catch(() => ({}));
     const m = content.messages || {};
@@ -558,36 +547,37 @@ async function handleMessageCore(ctx, text, msg) {
     return;
   }
 
-  try { if (await isBannedFor(ctx)) return; } catch {}
+  if (await isBannedFor(ctx)) return;
   const content = await getContent().catch(() => ({}));
   const m = content.messages || {};
-  const root = (await renderFor(ctx, content, "")).markup;
+  const getRoot = async () => (await renderFor(ctx, content, "")).markup;
 
   const repliedMessageId = msg.reply_to_message?.message_id;
   if (msg.reply_to_message?.from?.is_bot && repliedMessageId) {
     const parent = await questionForReply(ctx.chat.id, repliedMessageId).catch(() => null);
     if (parent) {
+      const root = await getRoot();
       const attachments = await extractAttachments(msg);
       const followupText = text || (attachments.length ? "📎 مرفق" : "");
-      if (!followupText) return ctx.reply(m.followupLimit || DEFAULT_FOLLOWUP_LIMIT, HTML_OPTS(root));
+      if (!followupText) return safeReply(ctx, m.followupLimit || DEFAULT_FOLLOWUP_LIMIT, HTML_OPTS(root));
       const followup = await addFollowup(parent.id, followupText, attachments).catch(() => null);
-      if (followup?.limitReached) return ctx.reply(m.followupLimit || DEFAULT_FOLLOWUP_LIMIT, HTML_OPTS(root));
+      if (followup?.limitReached) return safeReply(ctx, m.followupLimit || DEFAULT_FOLLOWUP_LIMIT, HTML_OPTS(root));
       if (followup) {
-        const sent = await ctx.reply(m.followupReceived || DEFAULT_FOLLOWUP_RECEIVED, HTML_OPTS(root));
+        const sent = await safeReply(ctx, m.followupReceived || DEFAULT_FOLLOWUP_RECEIVED, HTML_OPTS(root));
         await notifyStaffSafe({ kind: "followup", questionId: parent.id, n: (followup.followups || []).length, name: parent.customerName, text: followupText });
         return sent;
       }
-      return ctx.reply("حصلت مشكلة مؤقتة في حفظ المتابعة، وما اتسجلتش. جرّب تبعتها تاني بعد شوية من فضلك 🙏", HTML_OPTS(root));
+      return safeReply(ctx, "حصلت مشكلة مؤقتة في حفظ المتابعة، وما اتسجلتش. جرّب تبعتها تاني بعد شوية من فضلك 🙏", HTML_OPTS(root));
     }
   }
 
   const repliedText = msg.reply_to_message?.text || "";
   if (msg.reply_to_message?.from?.is_bot && repliedText.startsWith("📩 رد على سؤالك:")) {
-    return ctx.reply("لو عندك سؤال جديد، اضغط على زر «ابعت سؤالك» واكتبه هناك 👇", HTML_OPTS(root));
+    return safeReply(ctx, "لو عندك سؤال جديد، اضغط على زر «ابعت سؤالك» واكتبه هناك 👇", HTML_OPTS(await getRoot()));
   }
 
   if (text && hasMedical(text, content.medicalKeywords)) {
-    return ctx.reply(toHtml(m.medical || DEFAULT_MEDICAL), HTML_OPTS(root));
+    return safeReply(ctx, toHtml(m.medical || DEFAULT_MEDICAL), HTML_OPTS(await getRoot()));
   }
 
   if (text && hasInquiry(text, content.inquiryKeywords)) {
@@ -595,7 +585,7 @@ async function handleMessageCore(ctx, text, msg) {
     const btnUrl = (m.inquiryButtonUrl || "").trim();
     const validUrl = /^https:\/\/\S+$/.test(btnUrl);
     const kb = validUrl ? new InlineKeyboard().url(btnText || "📅 فتح", btnUrl) : undefined;
-    return ctx.reply(toHtml(m.inquiry || DEFAULT_INQUIRY), HTML_OPTS(kb));
+    return safeReply(ctx, toHtml(m.inquiry || DEFAULT_INQUIRY), HTML_OPTS(kb));
   }
 
   const r = msg.reply_to_message;
@@ -605,43 +595,44 @@ async function handleMessageCore(ctx, text, msg) {
   if (r && r.from?.is_bot && isAskPrompt) {
     const attachments = await extractAttachments(msg);
     const finalText = text || (attachments.length ? "📎 مرفق" : "");
-    if (!finalText) return ctx.reply("اكتب سؤالك أو أرسل صورة 👇", { reply_markup: { force_reply: true, input_field_placeholder: "اكتب سؤالك..." } });
-    return handleAskReply(ctx, finalText, content, m, root, attachments);
+    if (!finalText) return safeReply(ctx, "اكتب سؤالك أو أرسل صورة 👇", { reply_markup: { force_reply: true, input_field_placeholder: "اكتب سؤالك..." } });
+    return handleAskReply(ctx, finalText, content, m, attachments);
   }
 
   // صورة بدون reply: نرفعها لـ ImgBB ونحتفظ بالرابط مؤقتاً، ونطلب منه يكتب سؤاله
   if (!text && (msg.photo || msg.document)) {
     const intakeNow = await getIntake().catch(() => ({ enabled: true }));
-    if (!intakeNow.enabled) return ctx.reply(toHtml(intakeNow.message || DEFAULT_INTAKE_MESSAGE), HTML_OPTS(root));
+    if (!intakeNow.enabled) return safeReply(ctx, toHtml(intakeNow.message || DEFAULT_INTAKE_MESSAGE), HTML_OPTS(await getRoot()));
     const url = await uploadToImgBB(msg.photo ? msg.photo[msg.photo.length - 1].file_id : msg.document.file_id).catch(() => null);
     if (url) {
       try { await setPendingImage(ctx.chat.id, url); } catch {}
-      return ctx.reply("تم استلام الصورة 🖼️\nدلوقتي اكتب سؤالك وهتتبعت الصورة معاه 👇", {
+      return safeReply(ctx, "تم استلام الصورة 🖼️\nدلوقتي اكتب سؤالك وهتتبعت الصورة معاه 👇", {
         reply_markup: { force_reply: true, input_field_placeholder: "اكتب سؤالك..." },
       });
     }
-    return ctx.reply(toHtml(m.fallback || DEFAULT_FALLBACK), HTML_OPTS(root));
+    return safeReply(ctx, toHtml(m.fallback || DEFAULT_FALLBACK), HTML_OPTS(await getRoot()));
   }
 
-  if (!text) return ctx.reply(toHtml(m.fallback || DEFAULT_FALLBACK), HTML_OPTS(root));
+  if (!text) return safeReply(ctx, toHtml(m.fallback || DEFAULT_FALLBACK), HTML_OPTS(await getRoot()));
 
   const hits = searchNodes(content, text);
   if (hits.length === 1) return showHit(ctx, hits[0]);
   if (hits.length > 1) return showChoices(ctx, hits, content, m, false);
 
-  // لا نسجل الكلمات غير المتطابقة؛ الإحصاء التفصيلي ده اختياري وكان يستهلك أوامر لكل رسالة.
-  return ctx.reply(toHtml(m.fallback || DEFAULT_FALLBACK), HTML_OPTS(root));
+  return safeReply(ctx, toHtml(m.fallback || DEFAULT_FALLBACK), HTML_OPTS(await getRoot()));
 }
 
-async function handleMessage(ctx, text, msg) {
-  if (text && await handlePhoneSkip(ctx, text).catch(() => false)) return;
+bot.on("message", async (ctx) => {
+  const msg = ctx.message;
+  if (!msg) return;
+  const text = typeof msg.text === "string" ? msg.text : (typeof msg.caption === "string" ? msg.caption : "");
+  if (text && (await handlePhoneSkip(ctx, text))) return;
   await handleMessageCore(ctx, text, msg);
-  // نطلب الرقم بعد الرد العادي، ومش في وسط سؤال/متابعة (عشان ما نبوّظش خانة الكتابة)
-  if (msg.text && !msg.reply_to_message) await maybePromptPhone(ctx);
-}
+});
 
-bot.on("message:text", (ctx) => handleMessage(ctx, ctx.message.text || "", ctx.message));
-bot.on("message:photo", (ctx) => handleMessage(ctx, ctx.message.caption || "", ctx.message));
-bot.on("message:document", (ctx) => handleMessage(ctx, ctx.message.caption || "", ctx.message));
+bot.catch((err) => {
+  const desc = err.error?.description || err.error?.message || err.message || String(err);
+  console.error("[bot-error]", desc.replace(/bot\d+:[A-Za-z0-9_-]+/g, "bot***"));
+});
 
 export default webhookCallback(bot, "https");
